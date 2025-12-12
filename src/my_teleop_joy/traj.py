@@ -7,6 +7,8 @@ from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Twist
 import math
 import heapq
+from ament_index_python.packages import get_package_share_directory
+import os
 
 # -----------------------------
 # Helper A* functions
@@ -287,14 +289,14 @@ class CustomNavigator(Node):
             
             self.cmd_pub.publish(twist)
 
-            # ✅ Threshold moins strict
+            # Threshold moins strict
             WAYPOINT_THRESHOLD = 0.15
             if distance < WAYPOINT_THRESHOLD:
                 self.path.pop(0)
                 if len(self.path) > 0:
                     self.get_logger().info(f"Waypoint atteint! {len(self.path)} restants")
                 else:
-                    self.get_logger().info("🎉 GOAL ATTEINT!")
+                    self.get_logger().info("GOAL ATTEINT!")
             
             self.iteration_count += 1
 
@@ -303,9 +305,15 @@ class CustomNavigator(Node):
 # -----------------------------
 def main(args=None):
     rclpy.init(args=args)
+
+    map_path = os.path.expanduser("~/robmob_ws/src/map/map_inflated.pgm")
+    print(f"Utilisation de la map: {map_path}")
+
+    navigator = None
+
     try:
         navigator = CustomNavigator(
-            '/home/oualid/robmob_ws/map_inflated.pgm',
+            map_path,
             goal_world=(0.1, 2.1)
         )
         rclpy.spin(navigator)
