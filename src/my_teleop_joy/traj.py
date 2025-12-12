@@ -13,40 +13,52 @@ import os
 # -----------------------------
 # Helper A* functions
 # -----------------------------
+# retourne la distance de Manhattan entre deux points a et b [O]=y, [1]=x
 def heuristic(a, b):
     return abs(a[0]-b[0]) + abs(a[1]-b[1])
 
+
 def astar(grid, start, goal, max_iterations=50000):
-    print("Goal:", goal, "valeur dans grid:", grid[goal[0], goal[1]])
-    neighbors = [(0,1),(1,0),(0,-1),(-1,0)]
-    close_set = set()
-    came_from = {}
-    gscore = {start:0}
-    fscore = {start:heuristic(start, goal)}
-    oheap = []
+    # cette fonction implémente l'algorithme A* pour trouver un chemin dans une grille binaire
+    #print("Goal:", goal, "valeur dans grid:", grid[goal[0], goal[1]])
+    neighbors = [(0,1),(1,0),(0,-1),(-1,0)]# tous les déplacements possibles (4-connectivité)
+    
+    # structure du A*
+    close_set = set() # 
+    came_from = {} # pour reconstruire le chemin equivalent previous dans le cours
+    gscore = {start:0}  # cout du mouvement depuis le départ jusqu'au noeud actuel 1 pixel = cout de 1
+    fscore = {start:heuristic(start, goal)}  # fscore = gscore + heuristique jusqu'au but
+    oheap = [] # pile des noeuds à explorer ?? avec noeud = pixels
 
-    heapq.heappush(oheap, (fscore[start], start))
-    iterations = 0
+    heapq.heappush(oheap, (fscore[start], start)) # pile dans laquelle on a les noeuds explorés avec le plus petit fscore en premier
+    iterations = 0 
 
-    while oheap and iterations < max_iterations:
+    #------ Boucle d'exploration A* ------
+    while oheap and iterations < max_iterations: # tant qu'il y a des noeuds à explorer et pas trop d'itérations on explore
         iterations += 1
         current = heapq.heappop(oheap)[1]
 
-        if current == goal:
-            path = []
-            while current in came_from:
+        #------ Vérifier si on a atteint le but ------
+        if current == goal: 
+            # reconstruire le chemin
+            path = [] 
+            while current in came_from: # tant que le noeud courant a un parent
                 path.append(current)
                 current = came_from[current]
             path.append(start)
             print(f"A* trouvé en {iterations} itérations")
             return path[::-1]
 
-        close_set.add(current)
-        for i, j in neighbors:
+        # ------ Sinon Explorer les voisins ------
+        close_set.add(current) # ajouter le noeud courant aux explorés
+        # Pour chaque voisin possible de mon pixel courant
+        for i, j in neighbors: 
             neighbor = current[0]+i, current[1]+j
             tentative_g_score = gscore[current]+1
+            # vérifier si le voisin est dans la grille
             if 0 <= neighbor[0] < grid.shape[0]:
                 if 0 <= neighbor[1] < grid.shape[1]:
+                    # vérifier si le voisin est libre
                     if grid[neighbor[0]][neighbor[1]] == 1:
                         continue
                 else:
@@ -54,13 +66,16 @@ def astar(grid, start, goal, max_iterations=50000):
             else:
                 continue
 
-            if neighbor in close_set and tentative_g_score >= gscore.get(neighbor,0):
+            if neighbor in close_set and tentative_g_score >= gscore.get(neighbor,0): # si le voisin est déjà exploré ou pas meilleur on skip
                 continue
 
-            if tentative_g_score < gscore.get(neighbor,0) or neighbor not in [i[1] for i in oheap]:
+            if tentative_g_score < gscore.get(neighbor,0) or neighbor not in [i[1] for i in oheap]: # si le chemin vers le voisin est meilleur ou pas encore dans à explorer
+                # mettre à jour les scores et le parent
                 came_from[neighbor] = current
+                # Mettre à jour gscore et fscore
                 gscore[neighbor] = tentative_g_score
                 fscore[neighbor] = tentative_g_score + heuristic(neighbor, goal)
+                # Ajouter le voisin à la pile à explorer
                 heapq.heappush(oheap, (fscore[neighbor], neighbor))
 
     print(f"A* timeout après {iterations} itérations - pas de chemin trouvé")
