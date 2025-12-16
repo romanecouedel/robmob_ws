@@ -35,8 +35,8 @@ class GenerateTraj(Node):
         self.get_logger().info(f"Carte chargée depuis: {map_path}")
 
         # Convertir la carte en grille binaire (0=obstacle, 1=libre)
-        self.map_height, self.map_width = map_img.shape
-        self.grid = np.where(map_img > 127, 0, 1)  # 1=obstacle, 0=libre
+        self.map_height, self.map_width = self.map.shape
+        self.grid = np.where(self.map > 127, 0, 1)  # 1=obstacle, 0=libre
         free_cells = np.argwhere(self.grid == 0)
         occupied_cells = np.argwhere(self.grid == 1)
         print(f"Nombre de cellules libres: {len(free_cells)}")
@@ -44,17 +44,14 @@ class GenerateTraj(Node):
        
 
         # Convertir les coordonnées du but du monde aux indices de la grille
-        # Map resolution
-        self.map_resolution = map_resolution
-
         # OccupancyGrid message
         self.map_msg = OccupancyGrid()
         self.map_msg.header.frame_id = "map"
-        self.map_msg.info.resolution = map_resolution
+        self.map_msg.info.resolution = 0.05
         self.map_msg.info.width = self.map_width
         self.map_msg.info.height = self.map_height
-        self.map_msg.info.origin.position.x = 0.0
-        self.map_msg.info.origin.position.y = 0.0
+        self.map_msg.info.origin.position.x = 0.3
+        self.map_msg.info.origin.position.y = 0.3
         self.map_msg.info.origin.orientation.w = 1.0
         self.map_msg.data = np.where(self.grid == 1, 100, 0).flatten().tolist()
 
@@ -74,30 +71,38 @@ class GenerateTraj(Node):
         self.path = []
 
 
-        # Définir le point de départ (supposé être au centre bas de la carte)
-        start_x_idx = int((-self.origin[0]) / self.resolution)
-        start_y_idx = int(( -self.origin[1]) / self.resolution)
-        start_idx = (start_y_idx, start_x_idx)  # (row, col)
+        # Définir le point de départ 
+        #(ici on suppose que le robot démarre en (0,0) dans le monde)
+        origin_x = self.map_msg.info.origin.position.x
+        origin_y = self.map_msg.info.origin.position.y
+        res = self.map_msg.info.resolution
+
+        start_x_idx = int((0.0 + origin_x) / res) # 0.0 est la position x de départ dans le monde et origin_x est l'origine de la carte
+        start_y_idx = int((0.0 + origin_y) / res)
+        start_idx = (start_y_idx, start_x_idx)
+        
+        print("Start idx:", start_idx, "valeur grid:", self.grid[start_idx])
+        print("Goal idx:", self.goal_map, "valeur grid:", self.grid[self.goal_map])
+
+        
+
 
         # Générer la trajectoire avec A*
-        path = astar(self.grid, start_idx, goal_idx)
+        path = self.astar(self.grid, start_idx, self.goal_map)
         if not path:
-            raise ValueError("Aucun chemin trouvé vers le but spécifié.")
+            print("Aucun chemin trouvé vers le but spécifié.")
+            path = []
+            # raise ValueError("Aucun chemin trouvé vers le but spécifié.")
 
-        # Afficher la trajectoire sur la carte pour vérification
-        for point in path:
-            cv2.circle(self.map, (point[1], point[0]), 1, (127), -1)  # dessiner en gris
-
-        cv2.imshow("Trajectoire générée", self.map)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+        self.print_grid(path, start_idx)
         
         
         #------- les méthodes de la classe -------
+    @staticmethod
     def heuristic(a, b):
         return abs(a[0]-b[0]) + abs(a[1]-b[1])
 
-
+    @staticmethod
     def astar(grid, start, goal, max_iterations=50000):
         # cette fonction implémente l'algorithme A* pour trouver un chemin dans une grille binaire
         #print("Goal:", goal, "valeur dans grid:", grid[goal[0], goal[1]])
@@ -107,7 +112,7 @@ class GenerateTraj(Node):
         close_set = set() # 
         came_from = {} # pour reconstruire le chemin equivalent previous dans le cours
         gscore = {start:0}  # cout du mouvement depuis le départ jusqu'au noeud actuel 1 pixel = cout de 1
-        fscore = {start:heuristic(start, goal)}  # fscore = gscore + heuristique jusqu'au but
+        fscore = {start: GenerateTraj.heuristic(start, goal)}  # fscore = gscore + heuristique jusqu'au but
         oheap = [] # pile des noeuds à explorer ?? avec noeud = pixels
 
         heapq.heappush(oheap, (fscore[start], start)) # pile dans laquelle on a les noeuds explorés avec le plus petit fscore en premier
@@ -154,13 +159,15 @@ class GenerateTraj(Node):
                     came_from[neighbor] = current
                     # Mettre à jour gscore et fscore
                     gscore[neighbor] = tentative_g_score
-                    fscore[neighbor] = tentative_g_score + heuristic(neighbor, goal)
+                    fscore[neighbor] = tentative_g_score + GenerateTraj.heuristic(neighbor, goal)
                     # Ajouter le voisin à la pile à explorer
                     heapq.heappush(oheap, (fscore[neighbor], neighbor))
+        
 
         print(f"A* timeout après {iterations} itérations - pas de chemin trouvé")
         return []
 
+    
     def world_to_map(self, x, y):
         """Convertir coordonnées monde (x, y) → indices grille (row, col)"""
         origin_x = self.map_msg.info.origin.position.x
@@ -196,6 +203,41 @@ class GenerateTraj(Node):
         # Grille binaire: 0=libre, 1=obstacle
         grid = np.where(data > 50, 1, 0)
         return grid
+    
+    def print_grid(self, path, start_map):
+        visu = cv2.cvtColor(self.map, cv2.COLOR_GRAY2BGR)
+        # Start (vert)
+        cv2.circle(
+            visu,
+            (start_map[1], start_map[0]),  # (x=col, y=row)
+            5,
+            (0, 255, 0),
+            -1
+        )
+
+        # Goal (rouge)
+        cv2.circle(
+            visu,
+            (self.goal_map[1], self.goal_map[0]),
+            5,
+            (0, 0, 255),
+            -1
+        )
+        for (r, c) in path:
+            visu[r, c] = (255, 0, 0)  # bleu
+            
+        scale = 4  # facteur d’agrandissement
+        visu_big = cv2.resize(
+            visu,
+            (self.map_width * scale, self.map_height * scale),
+            interpolation=cv2.INTER_NEAREST
+        )
+        cv2.imshow("Carte + Start + Goal", visu_big)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+
+
+
 
 # -----------------------------
 # Main
@@ -211,9 +253,9 @@ def main(args=None):
     try:
         traj = GenerateTraj(
             map_path,
-            goal_world=(0.1, 2.1)
+            goal_world=(4, 4)
         )
-        rclpy.spin(navigtrajator)
+        rclpy.spin(traj)
     except KeyboardInterrupt:
         print("Arrêt par utilisateur")
     except Exception as e:

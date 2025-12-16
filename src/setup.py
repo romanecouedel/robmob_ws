@@ -28,6 +28,7 @@ setup(
     entry_points={
         'console_scripts': [
             'my_teleop_node = my_teleop_joy.my_teleop_node:main'
+            'plan= my_teleop_joy.planification:main',
         ],
     },
 )
