@@ -13,6 +13,8 @@ setup(
         ('share/' + package_name +'/launch',['launch/launch.py']),
         ('share/' + package_name +'/rviz',['rviz/robmob.rviz']),
         ('share/' + package_name +'/launch',['launch/rviz.launch.py']),
+        ('share/' + package_name +'/my_teleop_joy',['my_teleop_joy/planification.py']),
+        ('share/' + package_name +'/map',['map/map_inflated.pgm']),
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -26,9 +28,9 @@ setup(
         ],
     },
     entry_points={
-        'console_scripts': [
-            'my_teleop_node = my_teleop_joy.my_teleop_node:main'
-            'plan= my_teleop_joy.planification:main',
-        ],
-    },
+    'console_scripts': [
+        'my_teleop_node = my_teleop_joy.my_teleop_node:main',
+        'planification = my_teleop_joy.planification:main',
+    ],
+},
 )

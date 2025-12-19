@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import cv2
 import numpy as np
 import rclpy
@@ -9,6 +11,11 @@ import math
 import heapq
 from ament_index_python.packages import get_package_share_directory
 import os
+from nav_msgs.msg import Path
+from geometry_msgs.msg import Point
+from sensor_msgs.msg import PointCloud2, PointField
+import sensor_msgs_py.point_cloud2 as pc2
+from geometry_msgs.msg import Polygon, Point32
 
 # function
 # retourne la distance de Manhattan entre deux points a et b [O]=y, [1]=x
@@ -19,13 +26,13 @@ class GenerateTraj(Node):
     """
     GenerateTraj (Node)
  ├── Subscriber: /map  (OccupancyGrid)
- ├── Service /plan_path (PoseStamped start, PoseStamped goal → Path)
  ├── Méthode: world_to_map()
  ├── Méthode: build_grid_from_map()
  ├── Méthode: astar()
  └── Publie: /planned_path (nav_msgs/Path)
+ 
     """
-    def __init__(self, map_path, goal_world):
+    def __init__(self, map_path, goal_world, start_world):
         super().__init__('generate_traj_node')
 
         # Charger la carte
@@ -50,8 +57,8 @@ class GenerateTraj(Node):
         self.map_msg.info.resolution = 0.05
         self.map_msg.info.width = self.map_width
         self.map_msg.info.height = self.map_height
-        self.map_msg.info.origin.position.x = 0.3
-        self.map_msg.info.origin.position.y = 0.3
+        self.map_msg.info.origin.position.x = start_world[0]
+        self.map_msg.info.origin.position.y = start_world[1]
         self.map_msg.info.origin.orientation.w = 1.0
         self.map_msg.data = np.where(self.grid == 1, 100, 0).flatten().tolist()
 
@@ -93,8 +100,11 @@ class GenerateTraj(Node):
             print("Aucun chemin trouvé vers le but spécifié.")
             path = []
             # raise ValueError("Aucun chemin trouvé vers le but spécifié.")
+            
+        self.publish_path(path)
 
         self.print_grid(path, start_idx)
+        print("Trajectoire générée avec succès : ", path)
         
         
         #------- les méthodes de la classe -------
@@ -166,6 +176,26 @@ class GenerateTraj(Node):
 
         print(f"A* timeout après {iterations} itérations - pas de chemin trouvé")
         return []
+    
+    def publish_path(self, path_map):
+
+        msg = Polygon()
+        
+        for (row, col) in path_map:
+            x, y = self.map_to_world(row, col)
+            point = Point32()
+            point.x = x
+            point.y = y
+            point.z = 0.0
+            msg.points.append(point)
+
+            
+        self.wp_pub = self.create_publisher(Polygon, 'planned_path', 10)
+        self.wp_pub.publish(msg)
+        self.get_logger().info(
+            f"{len(msg.points)} waypoints world publiés"
+        )
+
 
     
     def world_to_map(self, x, y):
@@ -253,7 +283,8 @@ def main(args=None):
     try:
         traj = GenerateTraj(
             map_path,
-            goal_world=(4, 4)
+            goal_world=(5, 5),
+            start_world=(0.3, 0.3)
         )
         rclpy.spin(traj)
     except KeyboardInterrupt:
