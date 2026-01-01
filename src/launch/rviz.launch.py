@@ -17,18 +17,25 @@ def generate_launch_description():
     tb3_dqn_launch = os.path.join(tb3_pkg, "launch", "turtlebot3_dqn_stage2.launch.py")
 
     slam_pkg = get_package_share_directory("slam_toolbox")
-    slam_launch = os.path.join(slam_pkg, "launch", "online_async_launch.py")
+    
+    map_file = os.path.join(get_package_share_directory(
+        'my_teleop_joy'), 'params', 'map_name.yaml')
+    
+    amcl_file = os.path.join(get_package_share_directory(
+        'my_teleop_joy'), 'params', 'amcl.yaml')
+    
 
     return LaunchDescription([
 
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(tb3_dqn_launch),
-        ),
-
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(slam_launch),
             launch_arguments={"use_sim_time": use_sim_time}.items(),
         ),
+        
+        # IncludeLaunchDescription(
+        #      PythonLaunchDescriptionSource(slam_launch),
+        #      launch_arguments={"use_sim_time": use_sim_time}.items(),
+        #  ),
 
         Node(
             package="rviz2",
@@ -42,11 +49,19 @@ def generate_launch_description():
         Node(
             package='joy_linux',
             executable='joy_linux_node',
-            name='joy_linux_node'
+            name='joy_linux_node',
+            parameters=[{'use_sim_time': use_sim_time}],
         ),
+
         Node(
             package='my_teleop_joy',
             executable='my_teleop_node',
-            name='my_teleop_node'
-        )
+            name='my_teleop_node',
+            parameters=[{'use_sim_time': use_sim_time}],
+        ),
+      
+        
+     
+        
+        
     ])

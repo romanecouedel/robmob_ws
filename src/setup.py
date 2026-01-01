@@ -10,11 +10,17 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        ('share/' + package_name +'/launch',['launch/launch.py']),
+        ('share/' + package_name +'/launch',['launch/traj.py']),
         ('share/' + package_name +'/rviz',['rviz/robmob.rviz']),
         ('share/' + package_name +'/launch',['launch/rviz.launch.py']),
-        ('share/' + package_name +'/my_teleop_joy',['my_teleop_joy/planification.py']),
-        ('share/' + package_name +'/map',['map/map_inflated.pgm']),
+        ('share/' + package_name +'/launch',['launch/start_map_server_amcl.launch.py']),
+        ('share/' + package_name +'/params',['params/amcl.yaml']),
+        ('share/' + package_name +'/params',['params/map_name.yaml']),
+        ('share/' + package_name +'/params',['params/slam_toolbox_params.yaml']),
+        ('share/' + package_name +'/params',['params/map_name.pgm']),
+        ('share/' + package_name +'/params',['params/map_inflated.pgm']),
+        ('share/' + package_name +'/my_teleop_joy',['my_teleop_joy/traj1.py'])
+        
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -28,9 +34,9 @@ setup(
         ],
     },
     entry_points={
-    'console_scripts': [
-        'my_teleop_node = my_teleop_joy.my_teleop_node:main',
-        'planification = my_teleop_joy.planification:main',
-    ],
-},
+        'console_scripts': [
+            'my_teleop_node = my_teleop_joy.my_teleop_node:main',
+            'Trajectoire = my_teleop_joy.traj1:main',
+        ],
+    },
 )

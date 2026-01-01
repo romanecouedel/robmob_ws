@@ -15,6 +15,8 @@ class Subscriber(Node):
             10)
         self.pub = self.create_publisher(Twist,'/cmd_vel',10)
         
+
+        
     def listener_callback(self, msg):
        twist=Twist()
        twist.linear.x=msg.axes[1]
