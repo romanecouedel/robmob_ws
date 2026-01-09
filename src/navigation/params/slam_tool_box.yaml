@@ -1,0 +1,46 @@
+slam_toolbox:
+  ros__parameters:
+    # Le robot est lancé en simulation, synchroniser le temps du robot avec la clock de la simulation
+    use_sim_time: true
+    # Fréquence de mise à jour du SLAM en Hz
+    update_rate: 1.0
+    # Période de publication de la carte en secondes
+    publish_period: 0.1
+    # Résolution de la carte créée, en mètres/pixel
+    resolution: 0.05
+    # Portée maximale considérée pour les valeurs du laser scan
+    max_laser_range: 8.0
+    # Topic sur lequel le robot publie les données du laser scan
+    scan_topic: /scan
+    # Frame de référence pour la localisation locale (souvent "odom" par convention)
+    odom_frame: odom
+    # Frame de référence attachée au robot (souvent "base_link" par convention)
+    base_frame: base_link
+    # Mode d'opération de slam_toolbox (mapping ou localisation)
+    mode: mapping
+    # Activer les logs de debug
+    debug_logging: true
+
+    # Intervalle de mise à jour de la carte en secondes
+    map_update_interval: 5.0
+    # Seuil maximal d'occupation pour considérer une cellule comme occupée
+    max_occupied_threshold: 0.65
+    # Seuil minimal pour considérer une cellule comme libre
+    min_free_threshold: 0.196
+    # Intervalle de temps minimal entre deux mises à jour de pose en secondes
+    minimum_time_interval: 0.5
+    # Période de publication des transformations en secondes
+    transform_publish_period: 0.02
+    # Distance minimale parcourue pour déclencher une mise à jour en mètres
+    linear_update: 0.1
+    # Rotation minimale effectuée pour déclencher une mise à jour en radians
+    angular_update: 0.1
+    # Taille du buffer pour les scans laser
+    scan_buffer_size: 10
+    # Distance maximale des scans stockés dans le buffer en mètres
+    scan_buffer_maximum_scan_distance: 8.0
+    # Timeout pour la recherche de transformation en secondes
+    lookup_transform_timeout_sec: 0.5
+    submap:
+      # Nombre de cellules dans chaque sous-carte
+      number_of_cells: 3500
