@@ -17,9 +17,6 @@ from sensor_msgs.msg import PointCloud2, PointField
 import sensor_msgs_py.point_cloud2 as pc2
 from geometry_msgs.msg import Polygon, Point32
 
-# function
-# retourne la distance de Manhattan entre deux points a et b [O]=y, [1]=x
-
 
 class GenerateTraj(Node):
     
@@ -283,7 +280,7 @@ def main(args=None):
     try:
         traj = GenerateTraj(
             map_path,
-            goal_world=(5, 5),
+            goal_world=(1, 2),
             start_world=(0.3, 0.3)
         )
         rclpy.spin(traj)

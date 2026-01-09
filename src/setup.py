@@ -19,7 +19,9 @@ setup(
         ('share/' + package_name +'/params',['params/slam_toolbox_params.yaml']),
         ('share/' + package_name +'/params',['params/map_name.pgm']),
         ('share/' + package_name +'/params',['params/map_inflated.pgm']),
-        ('share/' + package_name +'/my_teleop_joy',['my_teleop_joy/traj1.py'])
+        ('share/' + package_name +'/my_teleop_joy',['my_teleop_joy/planification.py']),
+        ('share/' + package_name +'/map',['map/map_inflated.pgm']),
+
         
     ],
     install_requires=['setuptools'],
@@ -37,6 +39,7 @@ setup(
         'console_scripts': [
             'my_teleop_node = my_teleop_joy.my_teleop_node:main',
             'Trajectoire = my_teleop_joy.traj1:main',
+            'Planification = my_teleop_joy.planification:main',
         ],
     },
 )
