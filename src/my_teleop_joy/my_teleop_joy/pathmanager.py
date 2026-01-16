@@ -7,10 +7,12 @@ from nav_msgs.msg import OccupancyGrid, Path
 from geometry_msgs.msg import PoseStamped
 from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 import heapq
+from rclpy.qos import qos_profile_sensor_data
+from geometry_msgs.msg import PoseWithCovarianceStamped
 
 
 class PathManager(Node):
-    def __init__(self, goal_world, start_world):
+    def __init__(self, goal_world):
         super().__init__('path_manager')
 #SUBSCRBER
 # Configurer le QoS pour la subscription de la map
@@ -25,9 +27,23 @@ class PathManager(Node):
             '/map',
             self.map_callback,
             qos_map)
+        
+        self.start_received = False
+
+        self.start_sub = self.create_subscription(
+            PoseWithCovarianceStamped,
+            '/amcl_pose',
+            self.pose_callback,
+            qos_profile_sensor_data
+        )
+            
+        
+        #self.goal_sub=self.create_subscription(pose, '/goal_pose', self.goal_callback)
+        
 # PUBLISHER
 # Configurer le publisher pour le chemin calculé
         self.path_pub = self.create_publisher(Path, '/computed_path', 10)
+        
 
 # INITIALISATION de VARIABLES
         self.map_data = None
@@ -39,17 +55,35 @@ class PathManager(Node):
         self.msg_grid = None
         self.free_cell = None
         
+        
         # Goal défini en paramètres
         self.goal_x = goal_world[0]
         self.goal_y = goal_world[1]
         self.path_computed = False
-        
-        # Start défini en paramètres
-        self.start_x = start_world[0]
-        self.start_y = start_world[1]
-        
+                
         self.get_logger().info("MapManager initialized - waiting for /map")
         self.get_logger().info(f"Goal: ({self.goal_x}, {self.goal_y})")
+        
+        while (self.start_received!=True or self.map_received!=True):
+            self.get_logger().info("En attente de la position de départ et de la map...")
+            rclpy.spin_once(self, timeout_sec=1.0)
+        self.compute_path()
+
+        
+        
+    def pose_callback(self, msg: PoseWithCovarianceStamped):
+        """Récupérer la position de départ une seule fois"""
+        if self.start_received:
+            #self.get_logger().info(f"ignoring additional start position")
+
+            return  # Ignorer si on a déjà la position
+        
+        self.start_x = msg.pose.pose.position.x
+        self.start_y = msg.pose.pose.position.y
+        self.start_received = True
+        
+        self.get_logger().info(f"Position initiale reçue: ({self.start_x:.2f}, {self.start_y:.2f})")
+   
 
     def map_callback(self, msg: OccupancyGrid):
         """Récupérer la map"""
@@ -81,8 +115,8 @@ class PathManager(Node):
         self.get_logger().info("✓ Map prête pour la planification")
         
         # Calculer le chemin immédiatement après réception de la map
-        self.compute_path()
 
+        
     def map_to_world(self, row, col):
         """Convertir indices grille → coordonnées monde"""
         origin_x = self.msg_grid.info.origin.position.x
@@ -250,9 +284,7 @@ def main(args=None):
     rclpy.init(args=args)
     try:
         node = PathManager(
-            goal_world=(1.0, 2.0),
-            start_world=(0.3, 0.3)
-        )
+            goal_world=(0.0, 0.0),        )
         rclpy.spin(node)
     except KeyboardInterrupt:
         print("Arrêt par utilisateur")

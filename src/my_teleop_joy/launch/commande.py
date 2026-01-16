@@ -27,6 +27,13 @@ def generate_launch_description():
             name='trajectory_planner',
             parameters=[{'use_sim_time': use_sim_time}],
             output='screen',
+        ),
+        Node(
+            package='my_teleop_joy',
+            executable='goal_node',
+            name='goal_publisher',
+            parameters=[{'use_sim_time': use_sim_time}],
+            output='screen',
         )
     ])
     
