@@ -115,7 +115,7 @@ class TrajectoryPlanner(Node):
 
         # Vérifier s'il y a des waypoints restants
         if not self.path:
-            self.get_logger().info(" BUT ATTEINT!")
+            self.get_logger().info("🎉 BUT ATTEINT!")
             twist = Twist()
             twist.linear.x = 0.0
             twist.angular.z = 0.0

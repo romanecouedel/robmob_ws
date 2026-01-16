@@ -1,0 +1,86 @@
+amcl:
+  ros__parameters:
+    # Utiliser le temps de simulation au lieu du temps réel
+    use_sim_time: True
+    # Coefficients pour les bruits de mouvement
+    alpha1: 0.2
+    alpha2: 0.2
+    alpha3: 0.2
+    alpha4: 0.2
+    alpha5: 0.2
+    # Identifiant de la frame de base du robot
+    base_frame_id: "base_footprint"
+    # Distance seuil pour ignorer les faisceaux de laser
+    beam_skip_distance: 0.5
+    # Seuil d'erreur pour ignorer les faisceaux de laser
+    beam_skip_error_threshold: 0.9
+    # Seuil pour commencer à ignorer les faisceaux de laser
+    beam_skip_threshold: 0.3
+    # Activer ou désactiver le saut de faisceaux
+    do_beamskip: false
+    # Identifiant de la frame globale (carte)
+    global_frame_id: "map"
+    # Paramètre lambda pour le modèle de faisceau court
+    lambda_short: 0.1
+    # Distance maximale pour considérer les probabilités de faisceau laser
+    laser_likelihood_max_dist: 2.0
+    # Portée maximale du laser
+    laser_max_range: 100.0
+    # Portée minimale du laser
+    laser_min_range: -1.0
+    # Type de modèle de laser utilisé
+    laser_model_type: "likelihood_field"
+    # Nombre maximal de faisceaux laser utilisés
+    max_beams: 60
+    # Nombre maximal de particules
+    max_particles: 2000
+    # Nombre minimal de particules
+    min_particles: 500
+    # Identifiant de la frame odométrique
+    odom_frame_id: "odom"
+    # Erreur maximale permise pour le filtre particulaire
+    pf_err: 0.05
+    # Confiance dans les mesures de position
+    pf_z: 0.99
+    # Paramètre de récupération rapide pour le filtre particulaire
+    recovery_alpha_fast: 0.0
+    # Paramètre de récupération lente pour le filtre particulaire
+    recovery_alpha_slow: 0.0
+    # Intervalle de rééchantillonnage des particules
+    resample_interval: 1
+    # Type de modèle de mouvement du robot
+    robot_model_type: "nav2_amcl::DifferentialMotionModel"
+    # Fréquence de sauvegarde de la pose estimée (en secondes)
+    save_pose_rate: 0.5
+    # Écart type pour le modèle de capteur "hit"
+    sigma_hit: 0.2
+    # Activer ou désactiver la diffusion des transformations
+    tf_broadcast: true
+    # Tolérance pour la transformation des coordonnées (en secondes)
+    transform_tolerance: 1.0
+    # Seuil minimal de rotation pour mettre à jour la pose
+    update_min_a: 0.2
+    # Seuil minimal de translation pour mettre à jour la pose
+    update_min_d: 0.25
+    # Poids du modèle de capteur "hit"
+    z_hit: 0.5
+    # Poids du modèle de capteur "max"
+    z_max: 0.05
+    # Poids du modèle de capteur "rand"
+    z_rand: 0.5
+    # Poids du modèle de capteur "short"
+    z_short: 0.05
+    # Topic fournissant les données du scan laser
+    scan_topic: scan
+    # Topic sur lequel la carte est publiée
+    map_topic: map
+    # Utiliser seulement la première carte reçue
+    first_map_only: false
+    # Permet de définir la pose initiale avec le paramètre initial_pose
+    set_initial_pose: true
+    # Pose initiale du robot
+    initial_pose:
+      x: -2.0
+      y: -0.5
+      z: 0.0
+      yaw: 0.0

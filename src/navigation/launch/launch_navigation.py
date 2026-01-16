@@ -12,8 +12,8 @@ def generate_launch_description():
         # 1. Map Manager
         Node(
             package='navigation',
-            executable='mapmanager.py',
-            name='map_manager',
+            executable='pathmanager.py',
+            name='path_manager',
             parameters=[{'use_sim_time': use_sim_time}],
             output='screen',
         ),

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(navigation)
+project(my_teleop_joy)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -24,9 +24,9 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 
 # Installer les nodes Python exécutables
 install(PROGRAMS
-  src/pathmanager.py
-  src/trajplannig.py
-  src/planification.py
+  my_teleop_joy/pathmanager.py
+  my_teleop_joy/trajplannig.py
+  my_teleop_joy/my_teleop_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

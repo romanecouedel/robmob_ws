@@ -46,19 +46,19 @@ def generate_launch_description():
             output="screen",
         ),
         
-        Node(
-            package='joy_linux',
-            executable='joy_linux_node',
-            name='joy_linux_node',
-            parameters=[{'use_sim_time': use_sim_time}],
-        ),
+        # Node(
+        #     package='joy_linux',
+        #     executable='joy_linux_node',
+        #     name='joy_linux_node',
+        #     parameters=[{'use_sim_time': use_sim_time}],
+        # ),
 
-        Node(
-            package='my_teleop_joy',
-            executable='my_teleop_node',
-            name='my_teleop_node',
-            parameters=[{'use_sim_time': use_sim_time}],
-        ),
+        # Node(
+        #     package='my_teleop_joy',
+        #     executable='my_teleop_node',
+        #     name='my_teleop_node',
+        #     parameters=[{'use_sim_time': use_sim_time}],
+        # ),
       
         
      
