@@ -24,7 +24,9 @@ setup(
         ('share/' + package_name +'/srv',['srv/ComputePath.srv']),
         ('share/' + package_name +'/my_teleop_joy',['my_teleop_joy/traj1.py']),
         ('share/' + package_name +'/my_teleop_joy',['my_teleop_joy/pathmanager.py']),
-        ('share/' + package_name +'/my_teleop_joy',['my_teleop_joy/trajplannig.py'])
+        ('share/' + package_name +'/my_teleop_joy',['my_teleop_joy/trajplannig.py']),
+        ('share/' + package_name +'/my_teleop_joy',['my_teleop_joy/generate_goal.py'])
+
         
     ],
     install_requires=['setuptools'],
@@ -41,9 +43,9 @@ setup(
     entry_points={
         'console_scripts': [
             'my_teleop_node = my_teleop_joy.my_teleop_node:main',
-            #'Trajectoire = my_teleop_joy.traj1:main',
             'path_manager_node = my_teleop_joy.pathmanager:main',
             'trajectory_planner_node = my_teleop_joy.trajplannig:main',
+            'goal_node = my_teleop_joy.generate_goal:main',
         ],
     },
 )
