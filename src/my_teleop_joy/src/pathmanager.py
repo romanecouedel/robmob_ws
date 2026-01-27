@@ -9,6 +9,9 @@ from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 import heapq
 from rclpy.qos import qos_profile_sensor_data
 from geometry_msgs.msg import PoseWithCovarianceStamped
+from sensor_msgs.msg import LaserScan
+from tf2_ros import Buffer, TransformListener
+
 
 
 class PathManager(Node):
@@ -29,13 +32,36 @@ class PathManager(Node):
             qos_map)
         
         self.start_received = False
-
-        self.start_sub = self.create_subscription(
-            PoseWithCovarianceStamped,
-            '/amcl_pose',
-            self.pose_callback,
-            qos_profile_sensor_data
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)  
+        self.init_pose_pub = self.create_publisher(
+        PoseWithCovarianceStamped,
+        '/initialpose',
+        10
         )
+        self.goal_received = False
+
+        self.goal_sub = self.create_subscription(
+        PoseStamped,
+        '/goal_pose',
+        self.goal_callback,
+        10
+        )   
+
+        
+        # self.scan_sub = self.create_subscription(
+        #     LaserScan,
+        #     '/scan',
+        #     self.scan_callback,
+        #     qos_profile_sensor_data)
+
+
+        # self.start_sub = self.create_subscription(
+        #     PoseWithCovarianceStamped,
+        #     '/amcl_pose',
+        #     self.pose_callback,
+        #     10
+        # )
             
         
         #self.goal_sub=self.create_subscription(pose, '/goal_pose', self.goal_callback)
@@ -60,17 +86,53 @@ class PathManager(Node):
         self.goal_x = goal_world[0]
         self.goal_y = goal_world[1]
         self.path_computed = False
-                
+        
+        # Start défini en paramètres
+        
         self.get_logger().info("MapManager initialized - waiting for /map")
         self.get_logger().info(f"Goal: ({self.goal_x}, {self.goal_y})")
         
-        while (self.start_received!=True or self.map_received!=True):
-            self.get_logger().info("En attente de la position de départ et de la map...")
+        while not (self.start_received and self.map_received):
+            self.get_logger().info("En attente de la map et de la TF map->base_link...")
+            self.get_start()
             rclpy.spin_once(self, timeout_sec=1.0)
-        self.compute_path()
+
+        # self.compute_path()
 
         
-        
+    def get_start(self):
+        """Récupérer la position de départ via tf2"""
+        try:
+            transform = self.tf_buffer.lookup_transform('map', 'base_footprint', rclpy.time.Time())
+            self.start_x = transform.transform.translation.x
+            self.start_y = transform.transform.translation.y
+            self.start_received = True
+            self.get_logger().info(f"Position initiale reçue via tf2: ({self.start_x:.2f}, {self.start_y:.2f})")
+        except Exception as e:
+            self.get_logger().error(f"Erreur lors de la récupération de la position de départ via tf2: {e}")
+            self.start_received = False 
+            
+    def goal_callback(self, msg: PoseStamped):
+    # Sécurité : on accepte uniquement les goals en frame map
+        if msg.header.frame_id != 'map':
+            self.get_logger().warn(
+                f"Goal ignoré (frame = {msg.header.frame_id}, attendu = map)"
+            )
+            return
+        self.goal_x = msg.pose.position.x
+        self.goal_y = msg.pose.position.y
+        self.goal_received = True
+        self.path_computed = False  # autoriser un nouveau calcul
+
+        self.get_logger().info(
+            f"Nouveau goal reçu: ({self.goal_x:.2f}, {self.goal_y:.2f})"
+        )
+
+    # Recalcul immédiat
+        if self.start_received and self.map_received:
+            self.compute_path()
+
+
     def pose_callback(self, msg: PoseWithCovarianceStamped):
         """Récupérer la position de départ une seule fois"""
         if self.start_received:
@@ -284,7 +346,8 @@ def main(args=None):
     rclpy.init(args=args)
     try:
         node = PathManager(
-            goal_world=(0.0, 0.0),        )
+            goal_world=(0.0, 0.0)
+        )
         rclpy.spin(node)
     except KeyboardInterrupt:
         print("Arrêt par utilisateur")

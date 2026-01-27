@@ -22,9 +22,8 @@ setup(
         ('share/' + package_name +'/params',['params/map_inflated.pgm']),
         ('share/' + package_name +'/srv',['srv/SetGoal.srv']),
         ('share/' + package_name +'/srv',['srv/ComputePath.srv']),
-        ('share/' + package_name +'/my_teleop_joy',['my_teleop_joy/traj1.py']),
-        ('share/' + package_name +'/my_teleop_joy',['my_teleop_joy/pathmanager.py']),
-        ('share/' + package_name +'/my_teleop_joy',['my_teleop_joy/trajplannig.py'])
+        ('share/' + package_name +'/src',['src/pathmanager.py']),
+        ('share/' + package_name +'/src',['src/trajplannig.py'])
         
     ],
     install_requires=['setuptools'],
@@ -42,8 +41,8 @@ setup(
         'console_scripts': [
             'my_teleop_node = my_teleop_joy.my_teleop_node:main',
             #'Trajectoire = my_teleop_joy.traj1:main',
-            'path_manager_node = my_teleop_joy.pathmanager:main',
-            'trajectory_planner_node = my_teleop_joy.trajplannig:main',
+            'path_manager_node = src.pathmanager:main',
+            'trajectory_planner_node = src.trajplannig:main',
         ],
     },
 )

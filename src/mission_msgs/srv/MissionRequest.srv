@@ -1,0 +1,7 @@
+geometry_msgs/Point target_position
+string algorithm
+---
+uint8 OK = 1
+uint8 REFUSED = 2
+uint8 error_level
+string error_message
