@@ -9,11 +9,17 @@ from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 import heapq
 from rclpy.qos import qos_profile_sensor_data
 from geometry_msgs.msg import PoseWithCovarianceStamped
+from std_msgs.msg import Bool
+from tf2_ros import Buffer, TransformListener
 
 
 class PathManager(Node):
     def __init__(self, goal_world):
         super().__init__('path_manager')
+        
+        #test entrer dans le noeud
+        self.get_logger().info("Initialisation de PathManager...")
+        
 #SUBSCRBER
 # Configurer le QoS pour la subscription de la map
         qos_map = QoSProfile(
@@ -30,13 +36,23 @@ class PathManager(Node):
         
         self.start_received = False
 
-        self.start_sub = self.create_subscription(
-            PoseWithCovarianceStamped,
-            '/amcl_pose',
-            self.pose_callback,
-            qos_profile_sensor_data
+        #self.start_sub = self.create_subscription(
+        #    PoseWithCovarianceStamped,
+        #    '/pose',
+        #    self.pose_callback,
+        #    qos_profile_sensor_data
+        #)
+        
+        self.enable_sub = self.create_subscription(
+            Bool,
+            '/nav/enable',
+            self.enable_callback,
+            10
         )
-            
+        
+                
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
         
         #self.goal_sub=self.create_subscription(pose, '/goal_pose', self.goal_callback)
         
@@ -55,6 +71,9 @@ class PathManager(Node):
         self.msg_grid = None
         self.free_cell = None
         
+        # Flag pour tracker l'état de la navigation
+        self.nav_enabled = False
+        
         
         # Goal défini en paramètres
         self.goal_x = goal_world[0]
@@ -64,8 +83,8 @@ class PathManager(Node):
         self.get_logger().info("MapManager initialized - waiting for /map")
         self.get_logger().info(f"Goal: ({self.goal_x}, {self.goal_y})")
         
-        while (self.start_received!=True or self.map_received!=True):
-            self.get_logger().info("En attente de la position de départ et de la map...")
+        while (not self.map_received):
+            #self.get_logger().info("En attente de la position de départ et de la map...")
             rclpy.spin_once(self, timeout_sec=1.0)
         self.compute_path()
 
@@ -73,7 +92,7 @@ class PathManager(Node):
         
     def pose_callback(self, msg: PoseWithCovarianceStamped):
         """Récupérer la position de départ une seule fois"""
-        if self.start_received:
+        if self.path_computed:
             #self.get_logger().info(f"ignoring additional start position")
 
             return  # Ignorer si on a déjà la position
@@ -83,11 +102,15 @@ class PathManager(Node):
         self.start_received = True
         
         self.get_logger().info(f"Position initiale reçue: ({self.start_x:.2f}, {self.start_y:.2f})")
+        
+        # Si navigation est déjà activée, calculer le chemin
+        if self.nav_enabled and self.map_received:
+            self.compute_path()
    
 
     def map_callback(self, msg: OccupancyGrid):
         """Récupérer la map"""
-        if self.map_received:
+        if not self.nav_enabled:
             return
         
         self.get_logger().info(f"Map reçue: {msg.info.width}x{msg.info.height} @ {msg.info.resolution} m/cell")
@@ -114,7 +137,19 @@ class PathManager(Node):
         self.map_received = True
         self.get_logger().info("✓ Map prête pour la planification")
         
-        # Calculer le chemin immédiatement après réception de la map
+        # Si navigation est déjà activée, calculer le chemin
+        if self.nav_enabled :
+            self.compute_path()
+        
+    def enable_callback(self, msg):
+        """Réagir à l'activation de la navigation"""
+        self.nav_enabled = msg.data
+        
+        if msg.data:
+            self.get_logger().info("Navigation activée - calcul du chemin")
+        else:
+            self.get_logger().info("Navigation désactivée")
+            self.path_computed = False
 
         
     def map_to_world(self, row, col):
@@ -142,14 +177,38 @@ class PathManager(Node):
         
         return (row, col)
 
+    def get_robot_pose(self):
+        try:
+            t = self.tf_buffer.lookup_transform(
+                'map',
+                'base_link',
+                rclpy.time.Time()
+            )
+            x = t.transform.translation.x
+            y = t.transform.translation.y
+            return x, y
+        except:
+            return None
+
+    
     def compute_path(self):
         """Calculer le chemin vers le goal"""
+        
+        # Ne calculer que si navigation est activée
+        if not self.nav_enabled:
+            self.get_logger().info("Calcul de chemin ignoré - navigation désactivée")
+            return
         
         if self.path_computed:
             return
         
-        # Position de départ fixe (0, 0)
-        
+        robot_pose = self.get_robot_pose()
+        if robot_pose is None:
+            self.get_logger().warn("Impossible d'obtenir la pose via TF")
+            return
+
+        self.start_x, self.start_y = robot_pose
+
         goal_row, goal_col = self.world_to_map(self.goal_x, self.goal_y)
         start_row, start_col = self.world_to_map(self.start_x, self.start_y)
 
@@ -208,6 +267,8 @@ class PathManager(Node):
             path_msg.poses.append(pose)
         
         self.path_pub.publish(path_msg)
+        
+        
         
         #------- les méthodes de la classe -------
     @staticmethod
@@ -284,7 +345,7 @@ def main(args=None):
     rclpy.init(args=args)
     try:
         node = PathManager(
-            goal_world=(0.0, 0.0),        )
+            goal_world=(0.2, 0.2),        )
         rclpy.spin(node)
     except KeyboardInterrupt:
         print("Arrêt par utilisateur")

@@ -25,12 +25,12 @@ class TrajectoryPlanner(Node):
             self.path_callback,
             10)
 
-        self.pose_sub = self.create_subscription(
-            PoseWithCovarianceStamped,
-            'amcl_pose',
-            self.pose_callback,
-            qos_profile_sensor_data
-        )
+        #self.pose_sub = self.create_subscription(
+        #    PoseWithCovarianceStamped,
+        #    'amcl_pose',
+        #    self.pose_callback,
+        #    qos_profile_sensor_data
+        #)
 
         self.scan_sub = self.create_subscription(
             LaserScan,
@@ -116,9 +116,11 @@ class TrajectoryPlanner(Node):
             return
 
         # Récupérer la position actuelle
-        rx = self.pose.position.x
-        ry = self.pose.position.y
-        current_yaw = self.get_yaw(self.orientation)
+        pose = self.get_robot_pose_tf()
+        if pose is None:
+            return
+
+        rx, ry, current_yaw = pose
 
         # Vérifier s'il y a des waypoints restants
         if not self.path:
@@ -179,6 +181,26 @@ class TrajectoryPlanner(Node):
                 self.get_logger().info("BUT ATTEINT!")
 
         self.iteration_count += 1
+        
+    def get_robot_pose_tf(self):
+        try:
+            t = self.tf_buffer.lookup_transform(
+                'map',
+                'base_link',
+                rclpy.time.Time()
+            )
+            x = t.transform.translation.x
+            y = t.transform.translation.y
+
+            q = t.transform.rotation
+            yaw = self.get_yaw(q)
+
+            return x, y, yaw
+        except Exception as e:
+            self.get_logger().warn("TF map->base_link indisponible")
+            return None
+
+   
 
 
 def main(args=None):
