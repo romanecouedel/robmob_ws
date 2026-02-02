@@ -14,14 +14,35 @@ from tf2_ros import Buffer, TransformListener
 
 
 class PathManager(Node):
-    def __init__(self, goal_world):
+    def __init__(self):
         super().__init__('path_manager')
         
-        #test entrer dans le noeud
         self.get_logger().info("Initialisation de PathManager...")
         
-#SUBSCRBER
-# Configurer le QoS pour la subscription de la map
+        # ========== INITIALISATION DES VARIABLES ==========
+        self.map_data = None
+        self.grid = None
+        self.map_width = None
+        self.map_height = None
+        self.msg_grid = None
+        self.free_cell = None
+        
+        # Position start et goal
+        self.start_x = None
+        self.start_y = None
+        self.goal_x = None
+        self.goal_y = None
+        
+        # Flags d'état
+        self.nav_enabled = False
+        self.path_computed = False
+        self.map_received = False
+        
+        # ========== TF ==========
+        self.tf_buffer = Buffer()
+        self.tf_listener = TransformListener(self.tf_buffer, self)
+        
+        # ========== SUBSCRIBERS ==========
         qos_map = QoSProfile(
             depth=1,
             durability=DurabilityPolicy.TRANSIENT_LOCAL,
@@ -32,16 +53,8 @@ class PathManager(Node):
             OccupancyGrid,
             '/map',
             self.map_callback,
-            qos_map)
-        
-        self.start_received = False
-
-        #self.start_sub = self.create_subscription(
-        #    PoseWithCovarianceStamped,
-        #    '/pose',
-        #    self.pose_callback,
-        #    qos_profile_sensor_data
-        #)
+            qos_map
+        )
         
         self.enable_sub = self.create_subscription(
             Bool,
@@ -50,45 +63,47 @@ class PathManager(Node):
             10
         )
         
-                
-        self.tf_buffer = Buffer()
-        self.tf_listener = TransformListener(self.tf_buffer, self)
+        self.goal_sub = self.create_subscription(
+            PoseStamped,
+            '/goal_pose',
+            self.goal_callback,
+            10
+        )
         
-        #self.goal_sub=self.create_subscription(pose, '/goal_pose', self.goal_callback)
-        
-# PUBLISHER
-# Configurer le publisher pour le chemin calculé
+        # ========== PUBLISHER ==========
         self.path_pub = self.create_publisher(Path, '/computed_path', 10)
         
+        self.get_logger().info("PathManager initialisé - en attente de /map et /goal_pose")
 
-# INITIALISATION de VARIABLES
-        self.map_data = None
-        self.map_received = False
+    
         
-        self.grid = None
-        self.map_width = None
-        self.map_height = None
-        self.msg_grid = None
-        self.free_cell = None
+    def goal_callback(self, msg: PoseStamped):
+        """Recevoir un nouveau goal"""
+        # Sécurité : on accepte uniquement les goals en frame map
+        if msg.header.frame_id != 'map':
+            self.get_logger().warn(
+                f"Goal ignoré (frame = {msg.header.frame_id}, attendu = map)"
+            )
+            return
         
-        # Flag pour tracker l'état de la navigation
-        self.nav_enabled = False
-        
-        
-        # Goal défini en paramètres
-        self.goal_x = goal_world[0]
-        self.goal_y = goal_world[1]
-        self.path_computed = False
-                
-        self.get_logger().info("MapManager initialized - waiting for /map")
-        self.get_logger().info(f"Goal: ({self.goal_x}, {self.goal_y})")
-        
-        while (not self.map_received):
-            #self.get_logger().info("En attente de la position de départ et de la map...")
-            rclpy.spin_once(self, timeout_sec=1.0)
-        self.compute_path()
+        self.goal_x = msg.pose.position.x
+        self.goal_y = msg.pose.position.y
+        self.path_computed = False  # Autoriser un nouveau calcul
 
-        
+        self.get_logger().info(
+            f"Nouveau goal reçu: ({self.goal_x:.2f}, {self.goal_y:.2f})"
+        )
+
+        # Calcul immédiat SI navigation activée ET map reçue
+        if self.nav_enabled and self.map_received:
+            self.compute_path()
+        elif not self.nav_enabled:
+            self.get_logger().info("Goal enregistré - en attente d'activation de navigation")
+        elif not self.map_received:
+            self.get_logger().info("Goal enregistré - en attente de la map")
+
+   
+    
         
     def pose_callback(self, msg: PoseWithCovarianceStamped):
         """Récupérer la position de départ une seule fois"""
@@ -194,35 +209,46 @@ class PathManager(Node):
     def compute_path(self):
         """Calculer le chemin vers le goal"""
         
-        # Ne calculer que si navigation est activée
+        # ===== VÉRIFICATIONS PRÉALABLES =====
         if not self.nav_enabled:
-            self.get_logger().info("Calcul de chemin ignoré - navigation désactivée")
+            self.get_logger().info("Calcul ignoré - navigation désactivée")
             return
         
         if self.path_computed:
+            self.get_logger().info("Chemin déjà calculé")
             return
         
+        if self.goal_x is None:
+            self.get_logger().warn("Pas de goal défini")
+            return
+        
+        if not self.map_received:
+            self.get_logger().warn("Map non reçue")
+            return
+        
+        # ===== RÉCUPÉRER POSITION ROBOT =====
         robot_pose = self.get_robot_pose()
         if robot_pose is None:
-            self.get_logger().warn("Impossible d'obtenir la pose via TF")
+            self.get_logger().warn("Impossible d'obtenir la pose du robot via TF")
             return
 
         self.start_x, self.start_y = robot_pose
 
+        # ===== CONVERSION COORDONNÉES =====
         goal_row, goal_col = self.world_to_map(self.goal_x, self.goal_y)
         start_row, start_col = self.world_to_map(self.start_x, self.start_y)
 
-        self.get_logger().info(f"Position départ (monde): ({self.start_x:.2f}, {self.start_y:.2f})")
-        self.get_logger().info(f"Position départ (grille): ({start_row}, {start_col})")
+        self.get_logger().info(f"Start (monde): ({self.start_x:.2f}, {self.start_y:.2f})")
+        self.get_logger().info(f"Start (grille): ({start_row}, {start_col})")
+        self.get_logger().info(f"Goal (monde): ({self.goal_x:.2f}, {self.goal_y:.2f})")
         self.get_logger().info(f"Goal (grille): ({goal_row}, {goal_col})")
-        self.get_logger().info(f"Calcul du chemin...")
         
-        # Vérifier que start et goal sont libres
+        # ===== VÉRIFIER OBSTACLES =====
         if self.grid[start_row, start_col] == 1:
             self.get_logger().warn(f"Position de départ est un obstacle!")
             if len(self.free_cell) > 0:
                 start_row, start_col = self.free_cell[0]
-                self.get_logger().info(f"Nouvelle position de départ: ({start_row}, {start_col})")
+                self.get_logger().info(f"Nouvelle position: ({start_row}, {start_col})")
         
         if self.grid[goal_row, goal_col] == 1:
             self.get_logger().warn(f"Goal est un obstacle!")
@@ -230,24 +256,24 @@ class PathManager(Node):
                 goal_row, goal_col = self.free_cell[0]
                 self.get_logger().info(f"Nouveau goal: ({goal_row}, {goal_col})")
         
-        # Calculer le chemin
+        # ===== CALCUL A* =====
+        self.get_logger().info("Calcul du chemin A*...")
         path = PathManager.astar(self.grid, (start_row, start_col), (goal_row, goal_col))
 
         if not path:
-            self.get_logger().error("AUCUN CHEMIN TROUVÉ! Robot arrêté.")
+            self.get_logger().error("AUCUN CHEMIN TROUVÉ!")
             self.path_computed = False
             return
         
+        # ===== PUBLIER =====
         self.path_computed = True
-        
-        # Publier le chemin
         self.publish_path(path, "map")
         
         first_world = self.map_to_world(path[0][0], path[0][1])
         last_world = self.map_to_world(path[-1][0], path[-1][1])
-        self.get_logger().info(f"✓ Chemin trouvé ({len(path)} waypoints)")
-        self.get_logger().info(f"  Début (monde): {first_world}")
-        self.get_logger().info(f"  Fin (monde): {last_world}")
+        self.get_logger().info(f"Chemin trouvé ({len(path)} waypoints)")
+        self.get_logger().info(f"  Début: {first_world}")
+        self.get_logger().info(f"  Fin: {last_world}")
 
     def publish_path(self, path, frame_id):
         """Publier le chemin calculé"""
@@ -344,8 +370,7 @@ class PathManager(Node):
 def main(args=None):
     rclpy.init(args=args)
     try:
-        node = PathManager(
-            goal_world=(0.2, 0.2),        )
+        node = PathManager()
         rclpy.spin(node)
     except KeyboardInterrupt:
         print("Arrêt par utilisateur")

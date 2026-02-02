@@ -13,7 +13,7 @@ def generate_launch_description():
     rviz_config = os.path.join(pkg_share, "rviz", "robmob.rviz")
 
     tb3_pkg = get_package_share_directory("turtlebot3_gazebo")
-    tb3_dqn_launch = os.path.join(tb3_pkg, "launch", "turtlebot3_dqn_stage2.launch.py")
+    tb3_dqn_launch = os.path.join(tb3_pkg, "launch", "turtlebot3_dqn_stage4.launch.py")
 
     slam_pkg = get_package_share_directory("slam_toolbox")
     slam_launch = os.path.join(slam_pkg, "launch", "online_async_launch.py")
@@ -63,6 +63,14 @@ def generate_launch_description():
             package='my_teleop_joy',
             executable='trajectory_planner_node',
             name='trajectory_planner',
+            parameters=[{'use_sim_time': use_sim_time}],
+            output='screen',
+        ),
+        # 4. Exploration Node - exploration autonome
+        Node(
+            package='my_teleop_joy',
+            executable='exploration_node',
+            name='exploration_node',
             parameters=[{'use_sim_time': use_sim_time}],
             output='screen',
         ),

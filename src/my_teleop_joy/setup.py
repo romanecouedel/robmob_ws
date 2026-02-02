@@ -27,6 +27,7 @@ setup(
         ('share/' + package_name +'/my_teleop_joy',['my_teleop_joy/trajplannig.py']),
         ('share/' + package_name +'/my_teleop_joy',['my_teleop_joy/generate_goal.py']),
         ('share/' + package_name +'/my_teleop_joy',['my_teleop_joy/switch.py']),
+        ('share/' + package_name +'/my_teleop_joy',['my_teleop_joy/exploration_node.py']),
 
 
         
@@ -48,6 +49,7 @@ setup(
             'path_manager_node = my_teleop_joy.pathmanager:main',
             'trajectory_planner_node = my_teleop_joy.trajplannig:main',
             'goal_node = my_teleop_joy.generate_goal:main',
+            'exploration_node = my_teleop_joy.exploration_node:main',
         ],
     },
 )
