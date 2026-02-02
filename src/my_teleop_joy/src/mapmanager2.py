@@ -41,7 +41,10 @@ class PathManager(Node):
         
         # ✨ Publishers pour les deux chemins
         self.path_pub = self.create_publisher(Path, '/computed_path', 10)
-        self.return_path_pub = self.create_publisher(Path, '/return_path', 10)  # ✨ Nouveau
+        self.return_path_pub = self.create_publisher(Path, '/return_path', 10)
+        
+        # ✨ Publisher pour visualiser la map traitée
+        self.processed_map_pub = self.create_publisher(OccupancyGrid, '/map_processed', 10)
         
         # Initialisation de variables
         self.map_received = False
@@ -51,29 +54,34 @@ class PathManager(Node):
         self.msg_grid = None
         self.free_cell = None
         
-        # Goal défini en paramètres
+        # ✨ PARAMÈTRES DE TRAITEMENT DES ZONES NON EXPLORÉES
+        self.unknown_threshold = 50  # Valeur seuil pour déterminer "inconnu"
+                                     # 0-50 = explorée (libre)
+                                     # 50-100 = non explorée ou occupée
+        
+        self.treat_unknown_as_obstacle = True  # Traiter zones non explorées comme obstacles
+        
+        self.inflation_radius = 2    # Rayon de dilatation autour des zones inconnues
+        
+        # Goal
         self.goal_x = goal_world[0]
         self.goal_y = goal_world[1]
         self.path_computed = False
         
-        # ✨ Stocker la dernière position du robot
-        self.last_robot_position = None
-        
-        self.get_logger().info("PathManager initialized - waiting for /map")
-        self.get_logger().info(f"Goal: ({self.goal_x}, {self.goal_y})")
+        self.get_logger().info("🗺️ PathManager initialized with unknown zone handling")
+        self.get_logger().info(f"Unknown threshold: {self.unknown_threshold}")
+        self.get_logger().info(f"Treat unknown as obstacle: {self.treat_unknown_as_obstacle}")
+        self.get_logger().info(f"Inflation radius: {self.inflation_radius}")
         
         # Attendre seulement la map
         while not self.map_received:
             self.get_logger().info("En attente de la map...")
             rclpy.spin_once(self, timeout_sec=1.0)
 
-        self.get_logger().info("✓ Map reçue - prêt à planifier")
+        self.get_logger().info("✓ Map reçue et traitée - prêt à planifier")
         
     def get_robot_pose_from_tf(self):
-        """
-        Récupérer la position du robot via TF map->base_footprint
-        Retourne: (x, y) ou None si TF indisponible
-        """
+        """Récupérer la position du robot via TF map->base_footprint"""
         try:
             transform = self.tf_buffer.lookup_transform(
                 'map',
@@ -87,12 +95,11 @@ class PathManager(Node):
             return (x, y)
             
         except Exception as e:
-            self.get_logger().warn(f"⚠️ TF map->base_footprint indisponible: {e}")
+            self.get_logger().warn(f"⚠️ TF indisponible: {e}")
             return None
 
     def goal_callback(self, msg: PoseStamped):
         """Recevoir un nouveau goal"""
-        # Sécurité : on accepte uniquement les goals en frame map
         if msg.header.frame_id != 'map':
             self.get_logger().warn(
                 f"Goal ignoré (frame = {msg.header.frame_id}, attendu = map)"
@@ -100,18 +107,17 @@ class PathManager(Node):
             return
         self.goal_x = msg.pose.position.x
         self.goal_y = msg.pose.position.y
-        self.path_computed = False  # autoriser un nouveau calcul
+        self.path_computed = False
 
         self.get_logger().info(
             f"Nouveau goal reçu: ({self.goal_x:.2f}, {self.goal_y:.2f})"
         )
 
-        # Recalcul immédiat
         if self.map_received:
             self.compute_path()
 
     def map_callback(self, msg: OccupancyGrid):
-        """Récupérer la map"""
+        """Recevoir et traiter la map"""
         if self.map_received:
             return
         
@@ -121,15 +127,19 @@ class PathManager(Node):
         self.map_width = msg.info.width
         self.map_height = msg.info.height
         
+        # ✨ Traiter la map : convertir les zones non explorées en obstacles
         grid_data = np.array(msg.data, dtype=np.int8).reshape((self.map_height, self.map_width))
-        self.grid = np.where(grid_data >= 50, 1, 0).astype(np.uint8)
+        self.grid = self.process_unknown_zones(grid_data)
+        
+        # ✨ Publier la map traitée pour visualisation
+        self.publish_processed_map(self.grid)
         
         free_cells = np.argwhere(self.grid == 0)
         occupied_cells = np.argwhere(self.grid == 1)
         
         self.get_logger().info(f"Dimensions: {self.map_width} x {self.map_height}")
         self.get_logger().info(f"Cellules libres: {len(free_cells)}")
-        self.get_logger().info(f"Cellules occupées: {len(occupied_cells)}")
+        self.get_logger().info(f"Cellules occupées/inconnues: {len(occupied_cells)}")
         
         self.free_cell = free_cells
         if self.free_cell.size == 0:
@@ -137,8 +147,86 @@ class PathManager(Node):
             return
         
         self.map_received = True
-        self.get_logger().info("✓ Map prête pour la planification")
+        self.get_logger().info("✓ Map traitée et prête pour la planification")
+
+    def process_unknown_zones(self, grid_data):
+        """
+        ✨ Traiter les zones non explorées comme obstacles
         
+        Valeurs dans OccupancyGrid :
+        -1 = inconnu (gris)
+        0-49 = libre (blanc)
+        50-100 = occupé (noir)
+        
+        Stratégie :
+        1. Seuillage : >= unknown_threshold → obstacle
+        2. Optionnel : Dilatation pour sécurité
+        """
+        
+        self.get_logger().info("🔄 Traitement des zones non explorées...")
+        
+        # ✨ Étape 1 : Seuillage
+        # Traiter les zones grises ET noires comme obstacles
+        if self.treat_unknown_as_obstacle:
+            # >= unknown_threshold = obstacle (comprend -1, gris, noir)
+            binary_grid = (grid_data >= self.unknown_threshold).astype(np.uint8)
+            
+            obstacles_detected = np.sum(binary_grid)
+            self.get_logger().info(
+                f"✓ Seuillage: {self.unknown_threshold} → "
+                f"{obstacles_detected} cellules traitées comme obstacles"
+            )
+        else:
+            # Seuil standard (>= 50)
+            binary_grid = (grid_data >= 50).astype(np.uint8)
+        
+        # ✨ Étape 2 : Dilatation optionnelle (zone de sécurité)
+        if self.inflation_radius > 0:
+            binary_grid = self.dilate_obstacles(binary_grid)
+            self.get_logger().info(
+                f"✓ Dilatation appliquée (rayon={self.inflation_radius})"
+            )
+        
+        return binary_grid
+
+    def dilate_obstacles(self, grid):
+        """
+        ✨ Dilater les obstacles pour créer une zone de sécurité
+        
+        Évite que le robot passe trop proche des zones inconnues
+        """
+        from scipy.ndimage import binary_dilation
+        
+        dilated = grid.copy()
+        
+        for _ in range(self.inflation_radius):
+            # Dilater dans toutes les directions
+            dilated = binary_dilation(dilated).astype(np.uint8)
+        
+        return dilated
+
+    def publish_processed_map(self, processed_grid):
+        """
+        ✨ Publier la map traitée pour la visualiser dans RViz
+        """
+        map_msg = OccupancyGrid()
+        map_msg.header.frame_id = self.msg_grid.header.frame_id
+        map_msg.header.stamp = self.get_clock().now().to_msg()
+        
+        # Copier les métadonnées
+        map_msg.info = self.msg_grid.info
+        
+        # Convertir en occupancy grid
+        map_data = []
+        for val in processed_grid.flatten():
+            if val == 1:
+                map_data.append(100)  # Occupé (noir)
+            else:
+                map_data.append(0)    # Libre (blanc)
+        
+        map_msg.data = map_data
+        self.processed_map_pub.publish(map_msg)
+
     def map_to_world(self, row, col):
         """Convertir indices grille → coordonnées monde"""
         origin_x = self.msg_grid.info.origin.position.x
@@ -170,18 +258,13 @@ class PathManager(Node):
         if self.path_computed:
             return
         
-        # Récupérer la position actuelle via TF
         robot_pose = self.get_robot_pose_from_tf()
         
         if robot_pose is None:
             self.get_logger().error("❌ Impossible de récupérer la position du robot via TF!")
-            self.get_logger().error("Vérifiez que le TF tree map->base_footprint est disponible")
             return
         
         start_x, start_y = robot_pose
-        
-        # ✨ Sauvegarder la position du robot pour le chemin de retour
-        self.last_robot_position = (start_x, start_y)
         
         goal_row, goal_col = self.world_to_map(self.goal_x, self.goal_y)
         start_row, start_col = self.world_to_map(start_x, start_y)
@@ -208,18 +291,15 @@ class PathManager(Node):
         path = PathManager.astar(self.grid, (start_row, start_col), (goal_row, goal_col))
 
         if not path:
-            self.get_logger().error("AUCUN CHEMIN TROUVÉ! Robot arrêté.")
+            self.get_logger().error("AUCUN CHEMIN TROUVÉ!")
             self.path_computed = False
             return
         
         self.path_computed = True
         
-        # Publier le chemin
+        # Publier les chemins
         self.publish_path(path, "map")
-        
-        # ✨ Si c'est un goal (pas un retour), calculer aussi le chemin de retour
-        if self.is_goal_mode(start_x, start_y):
-            self.publish_return_path(path, "map")
+        self.publish_return_path(path, "map")
         
         first_world = self.map_to_world(path[0][0], path[0][1])
         last_world = self.map_to_world(path[-1][0], path[-1][1])
@@ -228,16 +308,9 @@ class PathManager(Node):
         self.get_logger().info(f"  Fin (monde): {last_world}")
 
     def is_goal_mode(self, current_x, current_y):
-        """
-        Déterminer si on est en mode goal (aller) ou retour
-        
-        ✨ Mode goal : le goal n'est pas le point de départ
-        ✨ Mode retour : le goal EST le point de départ
-        """
-        # Distance au goal
+        """Déterminer si on est en mode goal ou retour"""
         dist_to_goal = ((current_x - self.goal_x)**2 + (current_y - self.goal_y)**2)**0.5
         
-        # Si on est très proche du goal, c'est un mode retour
         if dist_to_goal < 0.5:
             return False  # Mode retour
         else:
@@ -263,10 +336,7 @@ class PathManager(Node):
         self.path_pub.publish(path_msg)
 
     def publish_return_path(self, forward_path, frame_id):
-        """
-        ✨ Publier le chemin de retour (inverse du chemin aller)
-        """
-        # Inverser le chemin pour obtenir le chemin de retour
+        """Publier le chemin de retour"""
         return_path = forward_path[::-1]
         
         path_msg = Path()
@@ -285,7 +355,6 @@ class PathManager(Node):
             path_msg.poses.append(pose)
         
         self.return_path_pub.publish(path_msg)
-        self.get_logger().info(f"📍 Chemin de retour publié ({len(return_path)} waypoints)")
         
     @staticmethod
     def heuristic(a, b):
@@ -293,7 +362,7 @@ class PathManager(Node):
 
     @staticmethod
     def astar(grid, start, goal, max_iterations=50000):
-        """Implémente l'algorithme A* pour trouver un chemin dans une grille binaire"""
+        """Implémente l'algorithme A*"""
         neighbors = [(0,1),(1,0),(0,-1),(-1,0)]
         
         close_set = set()
@@ -350,7 +419,7 @@ def main(args=None):
     rclpy.init(args=args)
     try:
         node = PathManager(
-            goal_world=(2.0, 2.0)  # Goal défini au démarrage
+            goal_world=(2.0, 2.0)
         )
         rclpy.spin(node)
     except KeyboardInterrupt:

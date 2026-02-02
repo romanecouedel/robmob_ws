@@ -4,8 +4,7 @@ import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import Path
 from sensor_msgs.msg import LaserScan
-from geometry_msgs.msg import Twist
-from geometry_msgs.msg import PoseWithCovarianceStamped
+from geometry_msgs.msg import Twist, PoseStamped
 from rclpy.qos import qos_profile_sensor_data
 
 from tf2_ros import TransformListener, Buffer
@@ -18,19 +17,15 @@ class TrajectoryPlanner(Node):
         super().__init__('trajectory_planner')
 
         self.cmd_publisher = self.create_publisher(Twist, '/cmd_vel', 10)
+        
+        # ✨ Publisher pour envoyer le goal (retour au départ)
+        self.goal_publisher = self.create_publisher(PoseStamped, '/goal_pose', 10)
 
         self.path_sub = self.create_subscription(
             Path,
             '/computed_path',
             self.path_callback,
             10)
-
-        self.pose_sub = self.create_subscription(
-            PoseWithCovarianceStamped,
-            'amcl_pose',
-            self.pose_callback,
-            qos_profile_sensor_data
-        )
 
         self.scan_sub = self.create_subscription(
             LaserScan,
@@ -41,15 +36,6 @@ class TrajectoryPlanner(Node):
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
-        # Initialiser avec une pose par défaut
-        pose_test = PoseWithCovarianceStamped()
-        pose_test.pose.pose.position.x = 0.0
-        pose_test.pose.pose.position.y = 0.0
-        pose_test.pose.pose.position.z = 0.0
-        
-        self.pose = pose_test.pose.pose  # Stocker la pose complète
-        self.orientation = pose_test.pose.pose.orientation
-        
         self.scan = None
         self.iteration_count = 0
         self.path_found = False
@@ -57,12 +43,13 @@ class TrajectoryPlanner(Node):
         self.path_computed = False
         self.navigation_active = False
         
-        self.get_logger().info("TrajectoryPlanner initialized - waiting for /amcl_pose and /computed_path")
-        self.create_timer(0.5, self.cmd)
-
-    def pose_callback(self, msg: PoseWithCovarianceStamped):
-        self.pose = msg.pose.pose
-        self.orientation = msg.pose.pose.orientation
+        # ✨ Nouvelles variables pour gérer le cycle retour
+        self.start_position = None  # Position de départ (sauvegardée)
+        self.returning_to_start = False  # État: en train de revenir au départ
+        self.goal_reached = False  # Le but a-t-il été atteint ?
+        
+        self.get_logger().info("TrajectoryPlanner initialized - waiting for /computed_path and TF map->base_footprint")
+        self.create_timer(0.05, self.cmd)
 
     def scan_callback(self, msg):
         self.scan = msg
@@ -78,8 +65,35 @@ class TrajectoryPlanner(Node):
         self.path_computed = True
         self.path_found = True
         self.navigation_active = True
+        
+        # ✨ Si on revient au départ, on réinitialise l'état
+        if self.returning_to_start:
+            self.get_logger().info("✓ Nouveau chemin reçu pour retour au départ")
+        else:
+            self.get_logger().info(f"✓ Chemin reçu: {len(self.path)} waypoints")
 
-        self.get_logger().info(f"✓ Chemin reçu: {len(self.path)} waypoints")
+    def get_robot_pose(self):
+        """
+        Récupérer la pose du robot via TF map->base_footprint
+        Retourne: (x, y, yaw) ou None si TF indisponible
+        """
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                'map',
+                'base_footprint',
+                rclpy.time.Time()
+            )
+            
+            x = transform.transform.translation.x
+            y = transform.transform.translation.y
+            q = transform.transform.rotation
+            yaw = self.get_yaw(q)
+            
+            return (x, y, yaw)
+            
+        except Exception as e:
+            self.get_logger().warn(f"TF indisponible: {e}")
+            return None
 
     def get_yaw(self, q):
         """Extraire yaw d'un quaternion"""
@@ -95,6 +109,21 @@ class TrajectoryPlanner(Node):
         while angle < -math.pi:
             angle += 2 * math.pi
         return angle
+
+    def publish_goal(self, x, y):
+        """
+        Publier un nouveau goal pour que path_manager recalcule le chemin
+        """
+        goal_msg = PoseStamped()
+        goal_msg.header.frame_id = 'map'
+        goal_msg.header.stamp = self.get_clock().now().to_msg()
+        goal_msg.pose.position.x = x
+        goal_msg.pose.position.y = y
+        goal_msg.pose.position.z = 0.0
+        goal_msg.pose.orientation.w = 1.0
+        
+        self.goal_publisher.publish(goal_msg)
+        self.get_logger().info(f"📍 Goal publié: ({x:.2f}, {y:.2f})")
 
     def cmd(self):
         """Contrôle du robot pour suivre le chemin planifié"""
@@ -115,20 +144,60 @@ class TrajectoryPlanner(Node):
         if not self.navigation_active:
             return
 
-        # Récupérer la position actuelle
-        rx = self.pose.position.x
-        ry = self.pose.position.y
-        current_yaw = self.get_yaw(self.orientation)
-
-        # Vérifier s'il y a des waypoints restants
-        if not self.path:
-            self.get_logger().info("BUT ATTEINT!")
+        # Récupérer la position actuelle via TF
+        pose = self.get_robot_pose()
+        if pose is None:
+            # TF indisponible, arrêter le robot
             twist = Twist()
             twist.linear.x = 0.0
             twist.angular.z = 0.0
             self.cmd_publisher.publish(twist)
-            self.navigation_active = False
             return
+
+        rx, ry, current_yaw = pose
+
+        # ✨ Sauvegarder la position de départ (première itération)
+        if self.start_position is None:
+            self.start_position = (rx, ry)
+            self.get_logger().info(f"📌 Position de départ sauvegardée: ({rx:.2f}, {ry:.2f})")
+
+        # Vérifier s'il y a des waypoints restants
+        if not self.path:
+            # ✨ CHANGEMENT PRINCIPAL : Gestion du cycle retour
+            if not self.returning_to_start:
+                # Le but a été atteint
+                self.get_logger().info("✨ BUT ATTEINT! ✨")
+                self.get_logger().info(f"📍 Position actuelle: ({rx:.2f}, {ry:.2f})")
+                self.goal_reached = True
+                self.returning_to_start = True
+                self.path_computed = False
+                self.path_found = False
+                
+                # Publier un nouveau goal = point de départ
+                self.publish_goal(self.start_position[0], self.start_position[1])
+                
+                # Arrêter temporairement le robot
+                twist = Twist()
+                twist.linear.x = 0.0
+                twist.angular.z = 0.0
+                self.cmd_publisher.publish(twist)
+                return
+            else:
+                # On est revenu au point de départ !
+                self.get_logger().info("🎉 RETOUR AU POINT DE DÉPART RÉUSSI! 🎉")
+                self.get_logger().info(f"📌 Position finale: ({rx:.2f}, {ry:.2f})")
+                
+                # Arrêter le robot
+                twist = Twist()
+                twist.linear.x = 0.0
+                twist.angular.z = 0.0
+                self.cmd_publisher.publish(twist)
+                
+                # Réinitialiser pour un nouveau cycle
+                self.navigation_active = False
+                self.returning_to_start = False
+                self.goal_reached = False
+                return
 
         # Obtenir le prochain waypoint
         next_wp = self.path[0]
@@ -143,8 +212,9 @@ class TrajectoryPlanner(Node):
 
         # 🔍 Débogage
         if self.iteration_count % 10 == 0:
+            mode = "Retour" if self.returning_to_start else "Aller"
             self.get_logger().info(
-                f"Robot: ({rx:.2f}, {ry:.2f}) | "
+                f"[{mode}] Robot: ({rx:.2f}, {ry:.2f}, yaw={current_yaw:.2f}) | "
                 f"Waypoint: ({wx:.2f}, {wy:.2f}) | "
                 f"Dist: {dist:.3f}"
             )
@@ -155,11 +225,11 @@ class TrajectoryPlanner(Node):
         k_beta = -1.0
 
         linear_speed = k_rho * dist
-        MAX_LINEAR_SPEED = 0.1
+        MAX_LINEAR_SPEED = 0.3
         linear_speed = max(-MAX_LINEAR_SPEED, min(MAX_LINEAR_SPEED, linear_speed))
 
         angular_speed = k_alpha * err_yaw + k_beta * err_yaw
-        MAX_ANGULAR_SPEED = 0.5
+        MAX_ANGULAR_SPEED = 1.0
         angular_speed = max(-MAX_ANGULAR_SPEED, min(MAX_ANGULAR_SPEED, angular_speed))
 
         # Publier les commandes
@@ -174,11 +244,11 @@ class TrajectoryPlanner(Node):
             self.path.pop(0)
             remaining = len(self.path)
             if remaining > 0:
-                self.get_logger().info(f"✓ Waypoint atteint! {remaining} restants")
-            else:
-                self.get_logger().info("BUT ATTEINT!")
+                mode = "Retour" if self.returning_to_start else "Aller"
+                self.get_logger().info(f"✓ [{mode}] Waypoint atteint! {remaining} restants")
 
         self.iteration_count += 1
+        
 
 
 def main(args=None):
