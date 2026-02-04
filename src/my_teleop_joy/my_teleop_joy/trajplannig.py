@@ -179,6 +179,7 @@ class TrajectoryPlanner(Node):
                 self.get_logger().info(f"✓ Waypoint atteint! {remaining} restants")
             else:
                 self.get_logger().info("BUT ATTEINT!")
+                self.path_computed=False
 
         self.iteration_count += 1
         

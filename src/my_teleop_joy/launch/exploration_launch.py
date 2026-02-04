@@ -24,9 +24,8 @@ def generate_launch_description():
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(tb3_dqn_launch),
             launch_arguments={"use_sim_time": use_sim_time}.items(),
-            
-             
         ),
+        
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(slam_launch),
             launch_arguments={"use_sim_time": use_sim_time}.items(),
