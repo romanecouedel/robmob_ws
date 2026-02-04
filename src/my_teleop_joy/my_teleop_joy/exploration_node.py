@@ -392,6 +392,7 @@ class ExplorationNode(Node):
                     # Marquer comme complété
                     self.waiting_for_goal_completion = False
                     
+                    
                     # Petit délai avant le prochain
                     self.create_timer(1.0, self.go_to_next_frontier, oneshot=True)
             
