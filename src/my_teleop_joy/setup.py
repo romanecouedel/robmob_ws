@@ -20,8 +20,6 @@ setup(
         ('share/' + package_name +'/params',['params/slam_toolbox_params.yaml']),
         ('share/' + package_name +'/params',['params/map_name.pgm']),
         ('share/' + package_name +'/params',['params/map_inflated.pgm']),
-        ('share/' + package_name +'/srv',['srv/SetGoal.srv']),
-        ('share/' + package_name +'/srv',['srv/ComputePath.srv']),
         ('share/' + package_name +'/src',['src/pathmanager.py']),
         ('share/' + package_name +'/src',['src/trajplannig.py'])
         
