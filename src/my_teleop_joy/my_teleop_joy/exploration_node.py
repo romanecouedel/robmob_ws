@@ -42,7 +42,7 @@ class ExplorationNode(Node):
         self.map_data = None
         self.map_info = None
         self.threshold_reached = False
-        self.exploration_threshold = 70.0  # Seuil de 70%
+        self.exploration_threshold = 50.0  # Seuil de 50%
         
         # Points frontières
         self.frontier_points = []
@@ -53,7 +53,7 @@ class ExplorationNode(Node):
         self.robot_y = None
         
         # Tolérance pour atteindre un point frontière
-        self.frontier_tolerance = 0.5  # m
+        self.frontier_tolerance = 5  # m
         
         # Navigation state
         self.waiting_for_goal_completion = False
@@ -98,7 +98,7 @@ class ExplorationNode(Node):
         self.nav_enable_pub = self.create_publisher(Bool, '/nav/enable', 10)
         
         # Timer de contrôle (10 Hz)
-        self.timer = self.create_timer(0.1, self.control_loop)
+        self.timer = self.create_timer(0.01, self.control_loop)
         
         self.get_logger().info('Exploration Node initialisé')
         self.get_logger().info('Utilise PathManager + TrajectoryPlanner pour la navigation')
@@ -130,9 +130,10 @@ class ExplorationNode(Node):
         
         # Sauvegarder les infos de la carte
         self.map_info = msg.info
+        self.map_data = np.array(msg.data)
         
         # Récupérer les données de la carte
-        map_array = np.array(msg.data)
+        map_array = self.map_data
         
         total_cells = len(map_array)
         explored_cells = np.sum(map_array != -1)
@@ -151,7 +152,7 @@ class ExplorationNode(Node):
             if not self.threshold_reached and self.exploration_percentage >= self.exploration_threshold:
                 self.threshold_reached = True
                 self.get_logger().info(
-                    f'🎉 SEUIL ATTEINT! La carte a été explorée à {self.exploration_percentage:.2f}% '
+                    f' SEUIL ATTEINT! La carte a été explorée à {self.exploration_percentage:.2f}% '
                     f'(>= {self.exploration_threshold}%)'
                 )
                 
@@ -185,52 +186,77 @@ class ExplorationNode(Node):
                     
                     # Si plus de frontières
                     if new_count == 0:
-                        self.get_logger().info('🎊 EXPLORATION TERMINÉE - Plus de frontières!')
+                        self.get_logger().info(' EXPLORATION TERMINÉE - Plus de frontières!')
                         self.exploration_mode = 'done'
                         nav_msg = Bool()
                         nav_msg.data = False
                         self.nav_enable_pub.publish(nav_msg)
+                        
+    def is_frontier_safe(self, grid, x, y, safety_radius=2):
+        """Vérifier qu'il n'y a pas d'obstacle proche"""
+        height, width = grid.shape
+        
+        for dy in range(-safety_radius, safety_radius + 1):
+            for dx in range(-safety_radius, safety_radius + 1):
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < width and 0 <= ny < height:
+                    if grid[ny, nx] > 50:  # Obstacle
+                        return False
+        return True
     
     def find_frontier_points(self, map_array, map_info, silent=False):
         """
-        Trouver les points frontières (cellules inconnues adjacentes à des cellules libres)
+        Trouver les points frontières selon la règle suivante:
+        - On considère les pixels "gris" (valeurs intermédiaires, ex 50-99) OU inconnus (-1)
+        - Un pixel gris est une frontière valide s'il a au moins un voisin blanc (libre)
+          et aucun voisin noir (occupé).
+
+        Cette méthode évite de considérer comme frontière les voisins de gris qui sont
+        à côté d'obstacles.
         """
         width = map_info.width
         height = map_info.height
         resolution = map_info.resolution
         origin_x = map_info.origin.position.x
         origin_y = map_info.origin.position.y
-        
+
         # Convertir en grille 2D
         grid = map_array.reshape((height, width))
-        
+
         self.frontier_points = []
-        
-        # Parcourir la grille
+
+        # Parcourir la grille (éviter bords)
         for y in range(1, height - 1):
             for x in range(1, width - 1):
-                
-                if grid[y, x] == -1:
-                    
-                    neighbors = [
-                        grid[y-1, x], grid[y+1, x], grid[y, x-1], grid[y, x+1],
-                        grid[y-1, x-1], grid[y-1, x+1], grid[y+1, x-1], grid[y+1, x+1],
-                    ]
-                    
-                    if any(n >= 0 and n < 50 for n in neighbors):
-                        
-                        world_x = origin_x + (x + 0.5) * resolution
-                        world_y = origin_y + (y + 0.5) * resolution
-                        
-                        self.frontier_points.append({
-                            'x': world_x,
-                            'y': world_y,
-                            'grid_x': x,
-                            'grid_y': y
-                        })
+                val = grid[y, x]
+
+                # Définir quand on considère une cellule comme "gris/inconnue"
+                is_gray = (val == -1) or (50 <= val < 100)
+                if not is_gray:
+                    continue
+
+                # Récupérer voisins (8-connexité)
+                neighbors = [
+                    grid[y-1, x], grid[y+1, x], grid[y, x-1], grid[y, x+1],
+                    grid[y-1, x-1], grid[y-1, x+1], grid[y+1, x-1], grid[y+1, x+1],
+                ]
+
+                # Conditions: au moins un voisin blanc/libre, aucun voisin noir/occupé
+                has_white_neighbor = any((n >= 0 and n < 50) for n in neighbors)
+                has_black_neighbor = any(n >= 100 for n in neighbors)
+
+                if has_white_neighbor and not has_black_neighbor:
+                    world_x = origin_x + (x + 0.5) * resolution
+                    world_y = origin_y + (y + 0.5) * resolution
+                    self.frontier_points.append({
+                        'x': world_x,
+                        'y': world_y,
+                        'grid_x': x,
+                        'grid_y': y
+                    })
         
         if not silent:
-            self.get_logger().info(f'🗺️  {len(self.frontier_points)} points frontières trouvés!')
+            self.get_logger().info(f'  {len(self.frontier_points)} points frontières trouvés!')
             
             if len(self.frontier_points) > 0:
                 self.get_logger().info('Exemples de points frontières:')
@@ -241,7 +267,8 @@ class ExplorationNode(Node):
                 
                 if len(self.frontier_points) > 5:
                     self.get_logger().info(f'  ... et {len(self.frontier_points) - 5} autres points')
-    
+                    
+                
     def get_robot_pose(self):
         """Obtenir la position du robot via TF"""
         try:
@@ -349,9 +376,13 @@ class ExplorationNode(Node):
         
         num_points = len(ranges)
         angle_front = int(num_points * 0.20)
-        
+
+        #angle_front = int(num_points * 0.70)
+        #front_left = ranges[:-angle_front] # pour la vraie vie 
         front_left = ranges[:angle_front]
+
         front_right = ranges[-angle_front:]
+        #front_ranges = np.concatenate([front_left])
         front_ranges = np.concatenate([front_left, front_right])
         
         if len(front_ranges) > 0:
@@ -369,7 +400,7 @@ class ExplorationNode(Node):
         if self.exploration_mode == 'random':
             if self.obstacle_ahead:
                 twist.angular.z = self.turn_speed
-                self.get_logger().info('Obstacle - Rotation', throttle_duration_sec=2.0)
+                self.get_logger().info('Obstacle - Rotation', throttle_duration_sec=1.5)
             else:
                 twist.linear.x = self.forward_speed
             
@@ -392,9 +423,13 @@ class ExplorationNode(Node):
                     # Marquer comme complété
                     self.waiting_for_goal_completion = False
                     
+                    # Rafraîchir la liste des frontières avec la nouvelle carte
+                    if self.map_info is not None and self.map_data is not None:
+                        self.get_logger().info(' Rafraîchissement de la liste des frontières...')
+                        self.find_frontier_points(self.map_data, self.map_info, silent=True)
                     
                     # Petit délai avant le prochain
-                    self.create_timer(1.0, self.go_to_next_frontier, oneshot=True)
+                    self.create_timer(1.0, self.go_to_next_frontier, single_shot=True)
             
             # TrajectoryPlanner gère le mouvement, on ne publie rien ici
         

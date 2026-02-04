@@ -21,10 +21,7 @@ def generate_launch_description():
     return LaunchDescription([
     
         # SLAM: Cartographie en temps réel
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(tb3_dqn_launch),
-            launch_arguments={"use_sim_time": use_sim_time}.items(),
-        ),
+        IncludeLaunchDescription(PythonLaunchDescriptionSource(tb3_dqn_launch),launch_arguments={"use_sim_time": use_sim_time}.items(),),
         
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(slam_launch),

@@ -11,6 +11,7 @@ from rclpy.qos import qos_profile_sensor_data
 from geometry_msgs.msg import PoseWithCovarianceStamped
 from std_msgs.msg import Bool
 from tf2_ros import Buffer, TransformListener
+import cv2
 
 
 class PathManager(Node):
@@ -74,6 +75,7 @@ class PathManager(Node):
         self.path_pub = self.create_publisher(Path, '/computed_path', 10)
         
         self.get_logger().info("PathManager initialisé - en attente de /map et /goal_pose")
+        
 
     
         
@@ -121,6 +123,21 @@ class PathManager(Node):
         # Si navigation est déjà activée, calculer le chemin
         if self.nav_enabled and self.map_received:
             self.compute_path()
+            
+    def dilate_grid(self, grid, radius):
+        dilated = grid.copy()
+        h, w = grid.shape
+        obstacles = np.argwhere(grid == 1)
+
+        for (r, c) in obstacles:
+            for dr in range(-radius, radius+1):
+                for dc in range(-radius, radius+1):
+                    rr = r + dr
+                    cc = c + dc
+                    if 0 <= rr < h and 0 <= cc < w:
+                        dilated[rr, cc] = 1
+        return dilated
+
    
 
     def map_callback(self, msg: OccupancyGrid):
@@ -135,8 +152,22 @@ class PathManager(Node):
         self.map_height = msg.info.height
         
         grid_data = np.array(msg.data, dtype=np.int8).reshape((self.map_height, self.map_width))
-        self.grid = np.where(grid_data >= 50, 1, 0).astype(np.uint8)
-        
+        raw_grid = np.where(grid_data >= 50, 1, 0).astype(np.uint8)
+
+        # ----- DILATATION -----
+        robot_radius_m = 0.1  # 25 cm
+        cell_size = msg.info.resolution
+        inflation_radius = int(robot_radius_m / cell_size)
+
+        self.grid = self.dilate_grid(raw_grid, inflation_radius)
+
+        raw_vis = (raw_grid * 255).astype(np.uint8)
+        dilated_vis = (self.grid * 255).astype(np.uint8)
+
+        cv2.imshow("Raw map", raw_vis)
+        cv2.imshow("Dilated map", dilated_vis)
+        cv2.waitKey(1)
+                
         free_cells = np.argwhere(self.grid == 0)
         occupied_cells = np.argwhere(self.grid == 1)
         
