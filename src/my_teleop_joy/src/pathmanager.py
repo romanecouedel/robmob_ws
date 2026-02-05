@@ -16,8 +16,8 @@ class PathManager(Node):
         super().__init__('path_manager')
 
         # ---------------- PARAMÈTRES ROBOT ----------------
-        self.robot_radius = 0.22       # m
-        self.inflation_margin = 0.05    # m
+        self.robot_radius = 0.17     # m
+        self.inflation_margin = 0.08  # m
         # --------------------------------------------------
 
         # Configuration TF
@@ -93,6 +93,7 @@ class PathManager(Node):
         )
 
         self.grid = np.where(grid_data >= 50, 1, 0).astype(np.uint8)
+        self.grid = self.fill_enclosed_unknown(self.grid, grid_data)
         self.grid_inflated = self.inflate_grid(self.grid)
 
         self.free_cell = np.argwhere(self.grid_inflated == 0)
@@ -128,6 +129,33 @@ class PathManager(Node):
             f"Obstacles dilatés : {inflation_cells} cellules (~{inflation_radius:.2f} m)"
         )
         return inflated
+    def fill_enclosed_unknown(self, grid, raw_grid):
+        """
+        Remplit les zones UNKNOWN (-1) complètement entourées d'obstacles
+        si il a 4 voisins obstacles.
+        """
+        filled = grid.copy()
+
+        unknown_cells = np.argwhere(raw_grid == -1)
+
+        for r, c in unknown_cells:
+            # regarder autour (4-connexité)
+            neighbors = [
+                (r+1, c), (r-1, c),
+                (r, c+1), (r, c-1)
+            ]
+
+            surrounded = True
+            for rr, cc in neighbors:
+                if 0 <= rr < grid.shape[0] and 0 <= cc < grid.shape[1]:
+                    if grid[rr, cc] == 0:
+                        surrounded = False
+                        break
+
+            if surrounded:
+                filled[r, c] = 1
+
+        return filled
 
     # ======================================================
     # COORDINATES
