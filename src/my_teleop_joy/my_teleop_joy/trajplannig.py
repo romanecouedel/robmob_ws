@@ -6,7 +6,7 @@ from nav_msgs.msg import Path
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Twist, PoseStamped
 from rclpy.qos import qos_profile_sensor_data
-
+from std_msgs.msg import Bool
 from tf2_ros import TransformListener, Buffer
 import math
 import traceback
@@ -32,6 +32,8 @@ class TrajectoryPlanner(Node):
             '/scan',
             self.scan_callback,
             10)
+        
+        self.publisher_reached = self.create_publisher(Bool, '/goal_reached', 10)
 
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
@@ -191,6 +193,10 @@ class TrajectoryPlanner(Node):
                 # On est revenu au point de départ !
                 self.get_logger().info(" RETOUR AU POINT DE DÉPART RÉUSSI! ")
                 self.get_logger().info(f" Position finale: ({rx:.2f}, {ry:.2f})")
+                msg = Bool()
+                msg.data = True
+                self.publisher_reached.publish(msg)
+                self.get_logger().info("✓ Message goal_reached publié: True")
                 
                 # Arrêter le robot
                 twist = Twist()

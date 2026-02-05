@@ -7,7 +7,7 @@ from ament_index_python.packages import get_package_share_directory
 import os
 
 def generate_launch_description():
-    use_sim_time = LaunchConfiguration("use_sim_time", default="true")
+    use_sim_time = LaunchConfiguration("use_sim_time", default="false")
 
     pkg_share = get_package_share_directory("my_teleop_joy")
     rviz_config = os.path.join(pkg_share, "rviz", "robmob.rviz")
@@ -21,7 +21,7 @@ def generate_launch_description():
     return LaunchDescription([
     
         # SLAM: Cartographie en temps réel
-        IncludeLaunchDescription(PythonLaunchDescriptionSource(tb3_dqn_launch),launch_arguments={"use_sim_time": use_sim_time}.items(),),
+        #IncludeLaunchDescription(PythonLaunchDescriptionSource(tb3_dqn_launch),launch_arguments={"use_sim_time": use_sim_time}.items(),),
         
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(slam_launch),

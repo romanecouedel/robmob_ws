@@ -9,10 +9,11 @@ from std_msgs.msg import Bool
 from tf2_ros import Buffer, TransformListener
 import numpy as np
 import math
+import cv2
 
 class ExplorationNode(Node):
     """
-    Nœud d'exploration intelligent.
+    Nœud d'exploration intelligent avec visualisation CV2.
     
     Algorithme:
     1. Exploration aléatoire jusqu'à 50%
@@ -42,7 +43,7 @@ class ExplorationNode(Node):
         self.map_data = None
         self.map_info = None
         self.threshold_reached = False
-        self.exploration_threshold = 50.0  # Seuil de 50%
+        self.exploration_threshold = 40.0  # Seuil de 50%
         
         # Points frontières
         self.frontier_points = []
@@ -51,16 +52,21 @@ class ExplorationNode(Node):
         # Position du robot
         self.robot_x = None
         self.robot_y = None
-        
-        # Tolérance pour atteindre un point frontière
-        self.frontier_tolerance = 5  # m
-        
+
         # Navigation state
         self.waiting_for_goal_completion = False
+        
+        # Callback du goal atteint (sera rempli par goal_reached_callback)
+        self.last_goal_reached_time = None
         
         # TF pour position du robot
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
+        
+        # Visualisation CV2
+        self.show_visualization = True
+        cv2.namedWindow('Frontier Exploration', cv2.WINDOW_NORMAL)
+        cv2.resizeWindow('Frontier Exploration', 800, 800)
         
         # Subscribers
         self.enable_sub = self.create_subscription(
@@ -92,6 +98,15 @@ class ExplorationNode(Node):
             10
         )
         
+        # Subscriber pour savoir quand le goal est atteint (depuis TrajectoryPlanner)
+        self.goal_reached_sub = self.create_subscription(
+            Bool,
+            '/goal_reached',
+            self.goal_reached_callback,
+            10
+        )
+        
+        
         # Publishers
         self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
         self.goal_pub = self.create_publisher(PoseStamped, '/goal_pose', 10)
@@ -100,8 +115,12 @@ class ExplorationNode(Node):
         # Timer de contrôle (10 Hz)
         self.timer = self.create_timer(0.01, self.control_loop)
         
+        # Timer pour visualisation CV2
+        self.viz_timer = self.create_timer(0.5, self.update_visualization)
+        
         self.get_logger().info('Exploration Node initialisé')
         self.get_logger().info('Utilise PathManager + TrajectoryPlanner pour la navigation')
+        self.get_logger().info('Visualisation CV2 activée')
     
     def enable_callback(self, msg):
         """Activer/désactiver l'exploration"""
@@ -124,73 +143,100 @@ class ExplorationNode(Node):
             self.nav_enable_pub.publish(nav_msg)
     
     def map_callback(self, msg):
-        """Calculer le pourcentage d'exploration de la carte"""
         if not self.exploration_enabled:
             return
-        
-        # Sauvegarder les infos de la carte
+
         self.map_info = msg.info
         self.map_data = np.array(msg.data)
-        
-        # Récupérer les données de la carte
+
         map_array = self.map_data
-        
         total_cells = len(map_array)
         explored_cells = np.sum(map_array != -1)
-        
-        # Calculer le pourcentage
+
         if total_cells > 0:
             self.exploration_percentage = (explored_cells / total_cells) * 100.0
-            
-            # Afficher le pourcentage régulièrement
+
             self.get_logger().info(
                 f'Exploration: {self.exploration_percentage:.2f}%',
                 throttle_duration_sec=5.0
             )
-            
-            # Vérifier si le seuil est atteint
+        
+
             if not self.threshold_reached and self.exploration_percentage >= self.exploration_threshold:
                 self.threshold_reached = True
-                self.get_logger().info(
-                    f' SEUIL ATTEINT! La carte a été explorée à {self.exploration_percentage:.2f}% '
-                    f'(>= {self.exploration_threshold}%)'
-                )
-                
-                # Générer la liste des points frontières
+                self.get_logger().info('SEUIL ATTEINT → MODE FRONTIER')
+
                 self.find_frontier_points(map_array, msg.info)
-                
-                # Passer en mode frontier
                 self.exploration_mode = 'frontier'
-                
-                # Arrêter l'exploration aléatoire
+
                 stop = Twist()
                 self.cmd_pub.publish(stop)
-                
-                # Activer PathManager
+
                 nav_msg = Bool()
                 nav_msg.data = True
                 self.nav_enable_pub.publish(nav_msg)
-                
-                # Aller au premier point frontière
-                self.go_to_next_frontier()
             
-            # Mettre à jour les frontières si déjà en mode frontier
-            elif self.threshold_reached and self.exploration_mode == 'frontier':
-                # Recalculer les frontières régulièrement
-                old_count = len(self.frontier_points)
-                self.find_frontier_points(map_array, msg.info, silent=True)
-                new_count = len(self.frontier_points)
+            # En mode frontier, mettre à jour les frontières à chaque nouvelle carte
+            if self.exploration_mode == 'frontier':
+                self.find_frontier_points(map_array, msg.info)
                 
-                if new_count != old_count:
-                    self.get_logger().info(f'Frontières mises à jour: {new_count} points (était {old_count})')
-                    
-                    # Si plus de frontières
-                    if new_count == 0:
-                        self.get_logger().info(' EXPLORATION TERMINÉE - Plus de frontières!')
-                        self.exploration_mode = 'done'
-                        nav_msg = Bool()
-                        nav_msg.data = False
-                        self.nav_enable_pub.publish(nav_msg)
+                # Si la frontière actuelle n'est plus valide, passer à la suivante
+                if not self.is_frontier_still_valid():
+                    self.get_logger().info("Frontière invalide → passage suivant")
+                    self.go_to_next_frontier()
+
+    def update_visualization(self):
+        """Mettre à jour la visualisation CV2"""
+        if not self.show_visualization or self.map_data is None or self.map_info is None:
+            return
+        
+        # Créer une image couleur de la carte
+        width = self.map_info.width
+        height = self.map_info.height
+        grid = self.map_data.reshape((height, width))
+        
+        # Convertir la grille en image RGB
+        img = np.zeros((height, width, 3), dtype=np.uint8)
+        
+        # Dessiner la carte
+        # Gris foncé pour inconnu (-1)
+        img[grid == -1] = [50, 50, 50]
+        # Blanc pour libre (0-49)
+        img[(grid >= 0) & (grid < 50)] = [255, 255, 255]
+        # Noir pour obstacles (50-100)
+        img[grid >= 50] = [0, 0, 0]
+        
+        # Dessiner les frontières en CYAN
+        for i, point in enumerate(self.frontier_points):
+            gx, gy = point['grid_x'], point['grid_y']
+            
+            # Point cible en VERT (plus gros)
+            if i == self.current_frontier_index and self.exploration_mode == 'frontier':
+                cv2.circle(img, (gx, gy), 5, (0, 255, 0), -1)  # Vert
+            else:
+                cv2.circle(img, (gx, gy), 2, (255, 255, 0), -1)  # Cyan
+        
+        # Dessiner la position du robot en ROUGE
+        pose = self.get_robot_pose()
+        if pose:
+            x, y = pose
+            resolution = self.map_info.resolution
+            origin_x = self.map_info.origin.position.x
+            origin_y = self.map_info.origin.position.y
+            
+            robot_grid_x = int((x - origin_x) / resolution)
+            robot_grid_y = int((y - origin_y) / resolution)
+            
+            if 0 <= robot_grid_x < width and 0 <= robot_grid_y < height:
+                cv2.circle(img, (robot_grid_x, robot_grid_y), 8, (0, 0, 255), -1)  # Rouge
+        
+        # Ajouter du texte
+        text = f'Mode: {self.exploration_mode} | Frontiers: {len(self.frontier_points)} | Exploration: {self.exploration_percentage:.1f}%'
+        cv2.putText(img, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+        
+        # Afficher
+        cv2.imshow('Frontier Exploration', img)
+        cv2.waitKey(1)
                         
     def is_frontier_safe(self, grid, x, y, safety_radius=2):
         """Vérifier qu'il n'y a pas d'obstacle proche"""
@@ -205,70 +251,40 @@ class ExplorationNode(Node):
         return True
     
     def find_frontier_points(self, map_array, map_info, silent=False):
-        """
-        Trouver les points frontières selon la règle suivante:
-        - On considère les pixels "gris" (valeurs intermédiaires, ex 50-99) OU inconnus (-1)
-        - Un pixel gris est une frontière valide s'il a au moins un voisin blanc (libre)
-          et aucun voisin noir (occupé).
-
-        Cette méthode évite de considérer comme frontière les voisins de gris qui sont
-        à côté d'obstacles.
-        """
         width = map_info.width
         height = map_info.height
         resolution = map_info.resolution
         origin_x = map_info.origin.position.x
         origin_y = map_info.origin.position.y
 
-        # Convertir en grille 2D
         grid = map_array.reshape((height, width))
-
         self.frontier_points = []
 
-        # Parcourir la grille (éviter bords)
-        for y in range(1, height - 1):
-            for x in range(1, width - 1):
+        for y in range(2, height - 2):  # Marges plus grandes
+            for x in range(2, width - 2):
                 val = grid[y, x]
 
-                # Définir quand on considère une cellule comme "gris/inconnue"
-                is_gray = (val == -1) or (50 <= val < 100)
-                if not is_gray:
-                    continue
-
-                # Récupérer voisins (8-connexité)
-                neighbors = [
-                    grid[y-1, x], grid[y+1, x], grid[y, x-1], grid[y, x+1],
-                    grid[y-1, x-1], grid[y-1, x+1], grid[y+1, x-1], grid[y+1, x+1],
-                ]
-
-                # Conditions: au moins un voisin blanc/libre, aucun voisin noir/occupé
-                has_white_neighbor = any((n >= 0 and n < 50) for n in neighbors)
-                has_black_neighbor = any(n >= 100 for n in neighbors)
-
-                if has_white_neighbor and not has_black_neighbor:
-                    world_x = origin_x + (x + 0.5) * resolution
-                    world_y = origin_y + (y + 0.5) * resolution
-                    self.frontier_points.append({
-                        'x': world_x,
-                        'y': world_y,
-                        'grid_x': x,
-                        'grid_y': y
-                    })
-        
-        if not silent:
-            self.get_logger().info(f'  {len(self.frontier_points)} points frontières trouvés!')
-            
-            if len(self.frontier_points) > 0:
-                self.get_logger().info('Exemples de points frontières:')
-                for i, point in enumerate(self.frontier_points[:5]):
-                    self.get_logger().info(
-                        f'  Point {i+1}: x={point["x"]:.2f}m, y={point["y"]:.2f}m'
-                    )
-                
-                if len(self.frontier_points) > 5:
-                    self.get_logger().info(f'  ... et {len(self.frontier_points) - 5} autres points')
+                # Frontière = cellule libre avec au moins un voisin inconnu
+                if val >= 0 and val < 50:  # Cellule libre
+                    neighbors = [
+                        grid[y-1, x], grid[y+1, x], grid[y, x-1], grid[y, x+1]
+                    ]
                     
-                
+                    # Au moins un voisin inconnu
+                    has_unknown = any(n == -1 for n in neighbors)
+                    # Pas d'obstacle proche
+                    is_safe = self.is_frontier_safe(grid, x, y, safety_radius=3)
+                    
+                    if has_unknown and is_safe:
+                        world_x = origin_x + (x + 0.5) * resolution
+                        world_y = origin_y + (y + 0.5) * resolution
+                        self.frontier_points.append({
+                            'x': world_x,
+                            'y': world_y,
+                            'grid_x': x,
+                            'grid_y': y,
+                            'unknown_count': sum(1 for n in neighbors if n == -1)
+                        })
     def get_robot_pose(self):
         """Obtenir la position du robot via TF"""
         try:
@@ -282,56 +298,56 @@ class ExplorationNode(Node):
             return x, y
         except Exception as e:
             return None
-    
+        
+       
     def go_to_next_frontier(self):
-        """Envoyer un goal vers le prochain point frontière"""
+        if self.waiting_for_goal_completion:
+            return
+
         if len(self.frontier_points) == 0:
-            self.get_logger().info('Plus de points frontières - Exploration terminée!')
+            self.get_logger().info('Plus de frontières - terminé')
             self.exploration_mode = 'done'
             nav_msg = Bool()
             nav_msg.data = False
             self.nav_enable_pub.publish(nav_msg)
             return
-        
-        # Obtenir position robot
+
         pose = self.get_robot_pose()
         if pose:
             self.robot_x, self.robot_y = pose
-        
-        # Trouver le point frontière le plus proche
-        if self.robot_x is not None and self.robot_y is not None:
-            closest_idx = 0
-            min_dist = float('inf')
-            
-            for i, point in enumerate(self.frontier_points):
-                dist = math.sqrt((point['x'] - self.robot_x)**2 + (point['y'] - self.robot_y)**2)
-                if dist < min_dist:
-                    min_dist = dist
-                    closest_idx = i
-            
-            self.current_frontier_index = closest_idx
         else:
-            # Si pas de position, prendre le premier
-            self.current_frontier_index = 0
-        
-        # Publier le goal
-        target = self.frontier_points[self.current_frontier_index]
-        
+            return
+
+        closest_idx = 0
+        min_dist = float('inf')
+
+        for i, point in enumerate(self.frontier_points):
+            dist = math.sqrt(
+                (point['x'] - self.robot_x)**2 +
+                (point['y'] - self.robot_y)**2
+            )
+            if dist < min_dist:
+                min_dist = dist
+                closest_idx = i
+
+        self.current_frontier_index = closest_idx
+        target = self.frontier_points[closest_idx]
+
         goal_msg = PoseStamped()
         goal_msg.header.frame_id = 'map'
         goal_msg.header.stamp = self.get_clock().now().to_msg()
         goal_msg.pose.position.x = target['x']
         goal_msg.pose.position.y = target['y']
-        goal_msg.pose.position.z = 0.0
         goal_msg.pose.orientation.w = 1.0
-        
+
         self.goal_pub.publish(goal_msg)
         self.waiting_for_goal_completion = True
-        
+
         self.get_logger().info(
-            f'Navigation vers frontière {self.current_frontier_index + 1}/{len(self.frontier_points)}: '
-            f'({target["x"]:.2f}, {target["y"]:.2f})'
+            f'GOAL → frontière {closest_idx+1}/{len(self.frontier_points)} '
+            f'dist={min_dist:.2f} m'
         )
+
     
     def path_callback(self, msg):
         """
@@ -344,23 +360,35 @@ class ExplorationNode(Node):
         if len(msg.poses) > 0:
             self.get_logger().info(f'✓ Chemin reçu: {len(msg.poses)} waypoints (TrajectoryPlanner s\'en charge)')
     
-    def is_frontier_reached(self):
-        """Vérifier si le point frontière actuel est atteint"""
+    def goal_reached_callback(self, msg):
+        if not msg.data or not self.exploration_enabled or self.exploration_mode != 'frontier':
+            return
+
+        self.get_logger().info('✓ Frontière atteinte')
+
+        self.waiting_for_goal_completion = False
+
+        # Recalcul complet des frontières
+        if self.map_info is not None and self.map_data is not None:
+            self.get_logger().info('Recalcul des frontières...')
+            self.find_frontier_points(self.map_data, self.map_info)
+
         if len(self.frontier_points) == 0:
-            return False
-        
-        pose = self.get_robot_pose()
-        if pose is None:
-            return False
-        
-        self.robot_x, self.robot_y = pose
-        
-        target = self.frontier_points[self.current_frontier_index]
-        dx = target['x'] - self.robot_x
-        dy = target['y'] - self.robot_y
-        distance = math.sqrt(dx*dx + dy*dy)
-        
-        return distance < self.frontier_tolerance
+            self.get_logger().info('Plus de frontières - exploration terminée')
+            self.exploration_mode = 'done'
+            nav_msg = Bool()
+            nav_msg.data = False
+            self.nav_enable_pub.publish(nav_msg)
+            return
+
+        # Petit délai pour stabiliser TF / carte
+        def delayed():
+            self.go_to_next_frontier()
+            timer.cancel()
+            self.destroy_timer(timer)
+
+        timer = self.create_timer(0.5, delayed)
+
     
     def scan_callback(self, msg):
         """Vérifier s'il y a un obstacle devant (pour mode random)"""
@@ -375,19 +403,21 @@ class ExplorationNode(Node):
             return
         
         num_points = len(ranges)
-        angle_front = int(num_points * 0.20)
+        angle_front = int(num_points * 0.70)
 
-        #angle_front = int(num_points * 0.70)
-        #front_left = ranges[:-angle_front] # pour la vraie vie 
-        front_left = ranges[:angle_front]
-
+        front_left = ranges[:-angle_front]
         front_right = ranges[-angle_front:]
-        #front_ranges = np.concatenate([front_left])
-        front_ranges = np.concatenate([front_left, front_right])
+        front_ranges = np.concatenate([front_left])
         
         if len(front_ranges) > 0:
             min_distance = np.min(front_ranges)
             self.obstacle_ahead = min_distance < self.obstacle_distance
+            
+    def is_frontier_still_valid(self):
+        p = self.frontier_points[self.current_frontier_index]
+        gx, gy = p['grid_x'], p['grid_y']
+        grid = self.map_data.reshape((self.map_info.height, self.map_info.width))
+        return grid[gy, gx] == -1
     
     def control_loop(self):
         """Boucle de contrôle principale"""
@@ -411,25 +441,9 @@ class ExplorationNode(Node):
             
             # Vérifier si on attend la fin d'un trajet
             if self.waiting_for_goal_completion:
-                
-                # Vérifier si on a atteint la frontière
-                if self.is_frontier_reached():
-                    self.get_logger().info(f'✓ Frontière {self.current_frontier_index + 1} atteinte!')
-                    
-                    # Supprimer ce point de la liste
-                    del self.frontier_points[self.current_frontier_index]
-                    self.get_logger().info(f' {len(self.frontier_points)} frontières restantes')
-                    
-                    # Marquer comme complété
-                    self.waiting_for_goal_completion = False
-                    
-                    # Rafraîchir la liste des frontières avec la nouvelle carte
-                    if self.map_info is not None and self.map_data is not None:
-                        self.get_logger().info(' Rafraîchissement de la liste des frontières...')
-                        self.find_frontier_points(self.map_data, self.map_info, silent=True)
-                    
-                    # Petit délai avant le prochain
-                    self.create_timer(1.0, self.go_to_next_frontier, single_shot=True)
+                # Le callback goal_reached_callback() gère l'arrivée aux frontières
+                # Donc on attend juste que le callback change waiting_for_goal_completion à False
+                pass
             
             # TrajectoryPlanner gère le mouvement, on ne publie rien ici
         
@@ -451,6 +465,7 @@ def main(args=None):
     finally:
         stop = Twist()
         node.cmd_pub.publish(stop)
+        cv2.destroyAllWindows()
         node.destroy_node()
         rclpy.shutdown()
 
