@@ -33,6 +33,12 @@ class TrajectoryPlanner(Node):
             self.scan_callback,
             10)
         
+        self.exploration_enable_sub = self.create_subscription(
+            Bool,
+            '/exploration/enable',
+            self.exploration_enable_callback,
+            10)
+        
         self.publisher_reached = self.create_publisher(Bool, '/goal_reached', 10)
 
         self.tf_buffer = Buffer()
@@ -44,6 +50,7 @@ class TrajectoryPlanner(Node):
         self.path = []
         self.path_computed = False
         self.navigation_active = False
+        self.exploration_active = False
         
         # Nouvelles variables pour gérer le cycle retour
         self.start_position = None  # Position de départ (sauvegardée)
@@ -56,6 +63,14 @@ class TrajectoryPlanner(Node):
         
         self.get_logger().info("TrajectoryPlanner initialized - waiting for /computed_path and TF map->base_footprint")
         self.create_timer(0.01, self.cmd)
+    
+    def exploration_enable_callback(self, msg: Bool):
+        if msg.data:
+            self.get_logger().info("✓ Exploration activée - prêt à recevoir un chemin")
+            self.exploration_active = True
+        else:
+            self.get_logger().info("✓ Exploration désactivée - arrêt du robot")
+            self.exploration_active = False
 
     def scan_callback(self, msg):
         self.scan = msg
@@ -180,6 +195,15 @@ class TrajectoryPlanner(Node):
                 self.path_computed = False
                 self.path_found = False
                 
+                if self.exploration_active:
+                    self.navigation_active = False
+                    self.returning_to_start = False
+                    self.goal_reached = False
+                    self.path_computed = False
+                    self.get_logger().info(" Exploration active - arrêt du robot en attendant un nouveau chemin")
+                    self.publisher_reached.publish(Bool(data=True))  # Indiquer que le goal est atteint pour l'exploration
+                    return
+                
                 # Publier un nouveau goal = point de départ
                 self.publish_goal(self.start_position[0], self.start_position[1])
                 
@@ -196,7 +220,6 @@ class TrajectoryPlanner(Node):
                 msg = Bool()
                 msg.data = True
                 self.publisher_reached.publish(msg)
-                self.get_logger().info("✓ Message goal_reached publié: True")
                 
                 # Arrêter le robot
                 twist = Twist()

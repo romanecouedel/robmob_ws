@@ -16,8 +16,9 @@ class PathManager(Node):
         super().__init__('path_manager')
 
         # ---------------- PARAMÈTRES ROBOT ----------------
-        self.robot_radius = 0.22       # m
-        self.inflation_margin = 0.05    # m
+        self.robot_radius = 0.17
+        self.inflation_margin = 0.08
+    
         # --------------------------------------------------
 
         # Configuration TF
@@ -79,8 +80,6 @@ class PathManager(Node):
     # MAP
     # ======================================================
     def map_callback(self, msg: OccupancyGrid):
-        if self.map_received:
-            return
 
         self.msg_grid = msg
         self.map_width = msg.info.width
@@ -90,7 +89,10 @@ class PathManager(Node):
             (self.map_height, self.map_width)
         )
 
+        
         self.grid = np.where(grid_data >= 50, 1, 0).astype(np.uint8)
+
+    
         self.grid_inflated = self.inflate_grid(self.grid)
 
         self.free_cell = np.argwhere(self.grid_inflated == 0)
@@ -166,8 +168,8 @@ class PathManager(Node):
     # PATH COMPUTATION
     # ======================================================
     def compute_path(self):
-        if self.path_computed:
-            return
+        #if self.path_computed:
+        #    return
 
         robot_pose = self.get_robot_pose_from_tf()
         if robot_pose is None:
@@ -178,11 +180,26 @@ class PathManager(Node):
 
         planning_grid = self.grid_inflated
 
+        # Si start/goal sont dans une cellule occupée, choisir la cellule libre
+        # la plus proche plutôt que la première trouvée (free_cell[0]).
         if planning_grid[start_row, start_col] == 1:
-            start_row, start_col = self.free_cell[0]
+            if self.free_cell is not None and self.free_cell.size > 0:
+                # self.free_cell shape (N,2) avec (row, col)
+                d2 = (self.free_cell[:, 0] - start_row) ** 2 + (self.free_cell[:, 1] - start_col) ** 2
+                idx = int(np.argmin(d2))
+                start_row, start_col = tuple(self.free_cell[idx])
+                self.get_logger().warn('Start occupée -> utilisation cellule libre la plus proche')
+            else:
+                self.get_logger().error('Aucune cellule libre disponible pour start')
 
         if planning_grid[goal_row, goal_col] == 1:
-            goal_row, goal_col = self.free_cell[0]
+            if self.free_cell is not None and self.free_cell.size > 0:
+                d2 = (self.free_cell[:, 0] - goal_row) ** 2 + (self.free_cell[:, 1] - goal_col) ** 2
+                idx = int(np.argmin(d2))
+                goal_row, goal_col = tuple(self.free_cell[idx])
+                self.get_logger().warn('Goal occupé -> utilisation cellule libre la plus proche')
+            else:
+                self.get_logger().error('Aucune cellule libre disponible pour goal')
 
         path = PathManager.astar(
             planning_grid,
@@ -224,7 +241,10 @@ class PathManager(Node):
         return abs(a[0] - b[0]) + abs(a[1] - b[1])
 
     @staticmethod
-    def astar(grid, start, goal):
+    def astar(grid, start, goal, cost_grid=None):
+        if cost_grid is None:
+            cost_grid = np.ones_like(grid, dtype=np.float32)
+        
         neighbors = [(0,1),(1,0),(0,-1),(-1,0)]
         close_set = set()
         came_from = {}
@@ -254,10 +274,11 @@ class PathManager(Node):
                         and 0 <= neighbor[1] < grid.shape[1]):
                     continue
 
-                if grid[neighbor] == 1:
+                if grid[neighbor] == 1:  # Obstacle réel
                     continue
 
-                tentative_g = gscore[current] + 1
+                # Utiliser le coût de la cellule
+                tentative_g = gscore[current] + cost_grid[neighbor]
 
                 if neighbor in close_set and tentative_g >= gscore.get(neighbor, 0):
                     continue
@@ -269,8 +290,6 @@ class PathManager(Node):
                     heapq.heappush(oheap, (fscore[neighbor], neighbor))
 
         return []
-
-
 def main(args=None):
     rclpy.init(args=args)
     node = PathManager()
