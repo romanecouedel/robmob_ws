@@ -64,8 +64,8 @@ class ModeSwitcher(Node):
         self.get_logger().info(f'║  Bouton {self.mode_cycle_button}: Cycler modes (TELEOP→AUTO→EXPLO) ║')
         self.get_logger().info('║                                                ║')
         self.get_logger().info('║  🕹️  TELEOP      : Contrôle manuel            ║')
-        self.get_logger().info('║  🎯 AUTO         : Navigation vers goal       ║')
         self.get_logger().info('║  🔍 EXPLORATION  : Exploration autonome        ║')
+        self.get_logger().info('║  🎯 AUTO         : Navigation vers goal       ║')
         self.get_logger().info('╚════════════════════════════════════════════════╝')
     
     def joy_callback(self, msg):
@@ -92,11 +92,11 @@ class ModeSwitcher(Node):
     def cycle_mode(self):
         """Cycle entre les 3 modes dans l'ordre: TELEOP → AUTO → EXPLORATION → TELEOP"""
         if self.current_mode == 'TELEOP':
-            self.set_mode('AUTO')
-        elif self.current_mode == 'AUTO':
             self.set_mode('EXPLORATION')
-        else:  # EXPLORATION
+        elif self.current_mode == 'AUTO':
             self.set_mode('TELEOP')
+        else:  # EXPLORATION
+            self.set_mode('AUTO')
     
     def set_mode(self, new_mode):
         """Définir le mode actuel et publier les états"""
@@ -152,7 +152,7 @@ class ModeSwitcher(Node):
             exploration_enable.data = False
         else:  # EXPLORATION
             teleop_enable.data = False
-            nav_enable.data = False
+            nav_enable.data = True # L'exploration utilise la navigation pour se déplacer vers les frontiers
             exploration_enable.data = True
         
         self.teleop_enable_pub.publish(teleop_enable)

@@ -13,7 +13,7 @@ def generate_launch_description():
     rviz_config = os.path.join(pkg_share, "rviz", "robmob.rviz")
 
     tb3_pkg = get_package_share_directory("turtlebot3_gazebo")
-    tb3_dqn_launch = os.path.join(tb3_pkg, "launch", "turtlebot3_dqn_stage4.launch.py")
+    tb3_dqn_launch = os.path.join(tb3_pkg, "launch", "turtlebot3_dqn_stage3.launch.py")
 
     slam_pkg = get_package_share_directory("slam_toolbox")
     slam_launch = os.path.join(slam_pkg, "launch", "online_async_launch.py")

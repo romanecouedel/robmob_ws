@@ -5,6 +5,7 @@ import rclpy
 from rclpy.node import Node
 from nav_msgs.msg import OccupancyGrid, Path
 from geometry_msgs.msg import PoseStamped
+from std_msgs.msg import Bool
 from rclpy.qos import QoSProfile, DurabilityPolicy, ReliabilityPolicy
 import heapq
 
@@ -38,9 +39,13 @@ class PathManager(Node):
         self.goal_sub = self.create_subscription(
             PoseStamped, '/goal_pose', self.goal_callback, 10
         )
+        
+        # Souscription pour savoir si le mode AUTO est activé
+        self.nav_enable_sub = self.create_subscription(
+            Bool, '/nav/enable', self.nav_enable_callback, 10
+        )
 
         self.path_pub = self.create_publisher(Path, '/computed_path', 10)
-        self.return_path_pub = self.create_publisher(Path, '/return_path', 10)
 
         self.map_received = False
         self.grid = None
@@ -50,8 +55,9 @@ class PathManager(Node):
         self.map_height = None
         self.free_cell = None
 
-        self.path_computed = False
-        self.last_robot_position = None
+        
+        # État du mode AUTO (activé par le switch)
+        self.nav_enabled = False
 
         self.get_logger().info("PathManager initialized - waiting for /map")
 
@@ -60,6 +66,17 @@ class PathManager(Node):
 
         self.get_logger().info("✓ Map reçue - prêt à planifier")
 
+    # ======================================================
+    # TF
+    # ======================================================
+    def nav_enable_callback(self, msg: Bool):
+        """Callback pour activer/désactiver le mode AUTO"""
+        self.nav_enabled = msg.data
+        if self.nav_enabled:
+            self.get_logger().info("✓ Mode AUTO activé - PathManager prêt à calculer des chemins")
+        else:
+            self.get_logger().info("✗ Mode AUTO désactivé - PathManager en pause")
+    
     # ======================================================
     # TF
     # ======================================================
@@ -84,10 +101,12 @@ class PathManager(Node):
         self.msg_grid = msg
         self.map_width = msg.info.width
         self.map_height = msg.info.height
+        
 
         grid_data = np.array(msg.data, dtype=np.int8).reshape(
             (self.map_height, self.map_width)
         )
+        self.raw_grid = grid_data 
 
         
         self.grid = np.where(grid_data >= 50, 1, 0).astype(np.uint8)
@@ -156,10 +175,14 @@ class PathManager(Node):
     def goal_callback(self, msg: PoseStamped):
         if msg.header.frame_id != 'map':
             return
+        
+        # Ne calculer le chemin que si le mode AUTO est activé
+        if not self.nav_enabled:
+            self.get_logger().warn("Goal reçu mais mode AUTO désactivé - ignoré")
+            return
 
         self.goal_x = msg.pose.position.x
         self.goal_y = msg.pose.position.y
-        self.path_computed = False
 
         if self.map_received:
             self.compute_path()
@@ -168,8 +191,6 @@ class PathManager(Node):
     # PATH COMPUTATION
     # ======================================================
     def compute_path(self):
-        #if self.path_computed:
-        #    return
 
         robot_pose = self.get_robot_pose_from_tf()
         if robot_pose is None:
@@ -204,14 +225,14 @@ class PathManager(Node):
         path = PathManager.astar(
             planning_grid,
             (start_row, start_col),
-            (goal_row, goal_col)
+            (goal_row, goal_col),
+            self.create_cost_grid()
         )
 
         if not path:
             self.get_logger().error("Aucun chemin trouvé")
             return
 
-        self.path_computed = True
         self.publish_path(path)
 
     # ======================================================
@@ -236,19 +257,28 @@ class PathManager(Node):
     # ======================================================
     # A*
     # ======================================================
+    def create_cost_grid(self):
+        cost_grid = np.ones_like(self.raw_grid, dtype=np.float32)
+        cost_grid[self.raw_grid == 0] = 1.0        # libre
+        cost_grid[self.raw_grid == -1] = 5.0       # inconnu = cher
+        cost_grid[self.raw_grid >= 50] = np.inf    # obstacle
+
+        cost_grid[self.grid_inflated == 1] = np.inf # Assurer que les cellules dilatées sont aussi considérées comme obstacles
+
+        return cost_grid
+
     @staticmethod
     def heuristic(a, b):
         return abs(a[0] - b[0]) + abs(a[1] - b[1])
 
     @staticmethod
-    def astar(grid, start, goal, cost_grid=None):
-        if cost_grid is None:
-            cost_grid = np.ones_like(grid, dtype=np.float32)
-        
-        neighbors = [(0,1),(1,0),(0,-1),(-1,0)]
+    def astar(grid, start, goal, cost_grid):
+        # 4-connectivité
+        neighbors = [(0, 1), (1, 0), (0, -1), (-1, 0)]
+
         close_set = set()
         came_from = {}
-        gscore = {start: 0}
+        gscore = {start: 0.0}
         fscore = {start: PathManager.heuristic(start, goal)}
         oheap = []
 
@@ -267,20 +297,22 @@ class PathManager(Node):
 
             close_set.add(current)
 
-            for i, j in neighbors:
-                neighbor = (current[0] + i, current[1] + j)
+            for dx, dy in neighbors:
+                neighbor = (current[0] + dx, current[1] + dy)
 
-                if not (0 <= neighbor[0] < grid.shape[0]
-                        and 0 <= neighbor[1] < grid.shape[1]):
+                # Hors carte
+                if not (0 <= neighbor[0] < grid.shape[0] and
+                        0 <= neighbor[1] < grid.shape[1]):
                     continue
 
-                if grid[neighbor] == 1:  # Obstacle réel
+                # Mur strict
+                if cost_grid[neighbor] == np.inf:
                     continue
 
-                # Utiliser le coût de la cellule
+                # Coût = coût de la case * 1 (pas de diagonale)
                 tentative_g = gscore[current] + cost_grid[neighbor]
 
-                if neighbor in close_set and tentative_g >= gscore.get(neighbor, 0):
+                if neighbor in close_set and tentative_g >= gscore.get(neighbor, float('inf')):
                     continue
 
                 if tentative_g < gscore.get(neighbor, float('inf')):
@@ -290,6 +322,7 @@ class PathManager(Node):
                     heapq.heappush(oheap, (fscore[neighbor], neighbor))
 
         return []
+
 def main(args=None):
     rclpy.init(args=args)
     node = PathManager()
